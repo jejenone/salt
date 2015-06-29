@@ -391,6 +391,24 @@ def remove_service(name, zone=None, permanent=True):
     return __firewall_cmd(cmd)
 
 
+def get_masquerade(zone):
+    '''
+    Show if masquerading is enabled on a zone
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' firewalld.get_masquerade zone
+    '''
+    zone_info = list_all(zone)
+
+    if [zone_info[i]['masquerade'][0] for i in zone_info.keys()] == 'no':
+        return False
+
+    return True
+
+
 def add_masquerade(zone):
     '''
     Enable masquerade on a zone.
@@ -399,7 +417,7 @@ def add_masquerade(zone):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.add_masquerade
     '''
@@ -414,7 +432,7 @@ def remove_masquerade(zone):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.remove_masquerade
     '''
@@ -429,13 +447,11 @@ def add_port(zone, port):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.add_port internal 443/tcp
     '''
-    zone_info = list_all(zone)
-
-    if 'no' in [zone_info[i]['masquerade'][0] for i in zone_info.keys()]:
+    if not get_masquerade(zone):
         add_masquerade(zone)
 
     return __firewall_cmd('--zone={0} --add-port={1}'.format(zone, port))
@@ -449,7 +465,7 @@ def remove_port(zone, port):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.remove_port internal 443/tcp
     '''
@@ -464,7 +480,7 @@ def list_ports(zone):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.list_ports
     '''
@@ -479,13 +495,11 @@ def add_port_fwd(zone, src, dest, proto='tcp', dstaddr=''):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.add_port_fwd public 80 443 tcp
     '''
-    zone_info = list_all(zone)
-
-    if 'no' in [zone_info[i]['masquerade'][0] for i in zone_info.keys()]:
+    if not get_masquerade(zone):
         add_masquerade(zone)
 
     return __firewall_cmd(
@@ -507,7 +521,7 @@ def remove_port_fwd(zone, src, dest, proto='tcp'):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.remove_port_fwd public 80 443 tcp
     '''
@@ -529,7 +543,7 @@ def list_port_fwd(zone):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.list_port_fwd public
     '''
@@ -556,7 +570,7 @@ def block_icmp(zone, icmp):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.block_icmp zone echo-reply
     '''
@@ -579,7 +593,7 @@ def allow_icmp(zone, icmp):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewalld.allow_icmp zone echo-reply
     '''
@@ -602,7 +616,7 @@ def list_icmp_block(zone):
 
     CLI Example:
 
-    .. code-block::
+    .. code-block:: bash
 
         salt '*' firewlld.list_icmp_block zone
     '''

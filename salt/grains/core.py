@@ -165,7 +165,7 @@ def _linux_gpu_data():
 
     devs = []
     try:
-        lspci_out = __salt__['cmd.run']('lspci -vmm')
+        lspci_out = __salt__['cmd.run']('{0} -vmm'.format(lspci))
 
         cur_dev = {}
         error = False
@@ -493,10 +493,10 @@ def _virtual(osdata):
     else:
         # /proc/bus/pci does not exists, lspci will fail
         if not os.path.exists('/proc/bus/pci'):
-            _cmds = ('dmidecode', 'dmesg', 'systemd-detect-virt', 'virt-what')
+            _cmds = ('systemd-detect-virt', 'virt-what', 'dmidecode', 'dmesg')
         else:
-            _cmds = ('dmidecode', 'lspci', 'dmesg',
-                     'systemd-detect-virt', 'virt-what')
+            _cmds = ('systemd-detect-virt', 'virt-what', 'dmidecode', 'lspci',
+                     'dmesg')
 
     failed_commands = set()
     for command in _cmds:
@@ -510,11 +510,18 @@ def _virtual(osdata):
         if not cmd:
             continue
 
-        cmd = '{0} {1}'.format(command, ' '.join(args))
+        cmd = '{0} {1}'.format(cmd, ' '.join(args))
 
-        ret = __salt__['cmd.run_all'](cmd)
+        try:
+            ret = __salt__['cmd.run_all'](cmd)
 
-        if ret['retcode'] > 0:
+            if ret['retcode'] > 0:
+                if salt.log.is_logging_configured():
+                    if salt.utils.is_windows():
+                        continue
+                    failed_commands.add(command)
+                continue
+        except salt.exceptions.CommandExecutionError:
             if salt.log.is_logging_configured():
                 if salt.utils.is_windows():
                     continue
@@ -573,6 +580,8 @@ def _virtual(osdata):
             if 'Manufacturer: QEMU' in output:
                 grains['virtual'] = 'kvm'
             if 'Vendor: Bochs' in output:
+                grains['virtual'] = 'kvm'
+            if 'Manufacturer: Bochs' in output:
                 grains['virtual'] = 'kvm'
             if 'BHYVE  BVXSDT' in output:
                 grains['virtual'] = 'bhyve'
@@ -730,10 +739,13 @@ def _virtual(osdata):
             if maker.startswith('Bochs'):
                 grains['virtual'] = 'kvm'
         if sysctl:
+            hv_vendor = __salt__['cmd.run']('{0} hw.hv_vendor'.format(sysctl))
             model = __salt__['cmd.run']('{0} hw.model'.format(sysctl))
             jail = __salt__['cmd.run'](
                 '{0} -n security.jail.jailed'.format(sysctl)
             )
+            if 'bhyve' in hv_vendor:
+                grains['virtual'] = 'bhyve'
             if jail == '1':
                 grains['virtual_subtype'] = 'jail'
             if 'QEMU Virtual CPU' in model:
@@ -974,9 +986,9 @@ def _linux_bin_exists(binary):
             pass
 
     try:
-        return len(__salt__['cmd.run_stdout'](
+        return len(__salt__['cmd.run_all'](
             'whereis -b {0}'.format(binary)
-        ).split()) > 1
+        )['stdout'].split()) > 1
     except salt.exceptions.CommandExecutionError:
         return False
 
@@ -1063,14 +1075,16 @@ def os_data():
                     with open(init_bin, 'rb') as fp_:
                         buf = True
                         edge = ''
+                        buf = fp_.read(buf_size).lower()
                         while buf:
-                            buf = edge + fp_.read(buf_size).lower()
+                            buf = edge + buf
                             for item in supported_inits:
                                 if item in buf:
                                     grains['init'] = item
                                     buf = ''
                                     break
                             edge = buf[-edge_len:]
+                            buf = fp_.read(buf_size).lower()
                 except (IOError, OSError) as exc:
                     log.error(
                         'Unable to read from init_bin ({0}): {1}'
@@ -1100,7 +1114,7 @@ def os_data():
                 #     DISTRIB_DESCRIPTION='Ubuntu 10.10'
                 regex = re.compile((
                     '^(DISTRIB_(?:ID|RELEASE|CODENAME|DESCRIPTION))=(?:\'|")?'
-                    '([\\w\\s\\.-_]+)(?:\'|")?'
+                    '([\\w\\s\\.\\-_]+)(?:\'|")?'
                 ))
                 with salt.utils.fopen('/etc/lsb-release') as ifile:
                     for line in ifile:
@@ -1127,7 +1141,7 @@ def os_data():
                             # BUG_REPORT_URL=
                             #   "https://github.com/archlinuxarm/PKGBUILDs/issues"
                             regex = re.compile(
-                                '^([\\w]+)=(?:\'|")?([\\w\\s\\.-_]+)(?:\'|")?'
+                                '^([\\w]+)=(?:\'|")?([\\w\\s\\.\\-_]+)(?:\'|")?'
                             )
                             match = regex.match(line.rstrip('\n'))
                             if match:

@@ -22,6 +22,7 @@ Full list of builtin state modules
     aws_sqs
     blockdev
     boto_asg
+    boto_cfn
     boto_cloudwatch_alarm
     boto_dynamodb
     boto_ec2
@@ -29,6 +30,7 @@ Full list of builtin state modules
     boto_elb
     boto_iam
     boto_iam_role
+    boto_kms
     boto_lc
     boto_rds
     boto_route53
@@ -48,6 +50,7 @@ Full list of builtin state modules
     debconfmod
     disk
     dockerio
+    dockerng
     drac
     environ
     eselect
@@ -104,6 +107,10 @@ Full list of builtin state modules
     ntp
     openstack_config
     pagerduty
+    pagerduty_escalation_policy
+    pagerduty_schedule
+    pagerduty_service
+    pagerduty_user
     pecl
     pip_state
     pkg
@@ -151,6 +158,7 @@ Full list of builtin state modules
     sysrc
     test
     timezone
+    tls
     tomcat
     tuned
     uptime

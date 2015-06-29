@@ -2,22 +2,28 @@
 '''
 Connection module for Amazon RDS
 
-.. versionadded:: 2014.7.1
+.. versionadded:: Beryllium
 
 :configuration: This module accepts explicit rds credentials but can also
     utilize IAM roles assigned to the instance trough Instance Profiles.
     Dynamic credentials are then automatically obtained from AWS API and no
-    further configuration is necessary. More Information available at::
+    further configuration is necessary. More Information available at:
 
-       http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
+    .. code-block:: text
+
+        http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
 
     If IAM roles are not used you need to specify them either in a pillar or
-    in the minion's config file::
+    in the minion's config file:
+
+    .. code-block:: yaml
 
         rds.keyid: GKTADJGHEIQSXMKKRBJ08H
         rds.key: askdjghsdfjkghWupUjasdflkdfklgjsdfjajkghs
 
-    A region may also be specified in the configuration::
+    A region may also be specified in the configuration:
+
+    .. code-block:: yaml
 
         rds.region: us-east-1
 
@@ -26,6 +32,8 @@ Connection module for Amazon RDS
     It's also possible to specify key, keyid and region via a profile, either
     as a passed in dict, or as a string to pull from pillars or minion config:
 
+    .. code-block:: yaml
+
         myprofile:
             keyid: GKTADJGHEIQSXMKKRBJ08H
             key: askdjghsdfjkghWupUjasdflkdfklgjsdfjajkghs
@@ -33,17 +41,20 @@ Connection module for Amazon RDS
 
 :depends: boto
 '''
+# keep lint from choking on _get_conn and _cache_id
+#pylint: disable=E0602
+
 from __future__ import absolute_import
 
 # Import Python libs
 import logging
-from salt.ext.six import string_types
 from salt.exceptions import SaltInvocationError
 from time import sleep
 
 log = logging.getLogger(__name__)
 
 # Import third party libs
+import salt.ext.six as six
 try:
     import boto
     import boto.rds2
@@ -59,6 +70,7 @@ def __virtual__():
     '''
     if not HAS_BOTO:
         return False
+    __utils__['boto.assign_funcs'](__name__, 'rds', module='rds2')
     return True
 
 
@@ -70,9 +82,8 @@ def exists(name, tags=None, region=None, key=None, keyid=None, profile=None):
 
         salt myminion boto_rds.exists myrds region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         rds = conn.describe_db_instances(db_instance_identifier=name)
         if not rds:
@@ -94,9 +105,8 @@ def option_group_exists(name, tags=None, region=None, key=None, keyid=None,
 
         salt myminion boto_rds.option_group_exists myoptiongr region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         rds = conn.describe_option_groups(option_group_name=name)
         if not rds:
@@ -121,9 +131,8 @@ def parameter_group_exists(name, tags=None, region=None, key=None, keyid=None,
         salt myminion boto_rds.parameter_group_exists myparametergroup \
                 region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         rds = conn.describe_db_parameter_groups(db_parameter_group_name=name)
         if not rds:
@@ -147,9 +156,8 @@ def subnet_group_exists(name, tags=None, region=None, key=None, keyid=None,
         salt myminion boto_rds.subnet_group_exists my-param-group \
                 region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         rds = conn.describe_db_subnet_groups(db_subnet_group_name=name)
         if not rds:
@@ -181,9 +189,8 @@ def create(name, allocated_storage, storage_type, db_instance_class, engine,
 
         salt myminion boto_rds.create myrds 10 db.t2.micro MySQL sqlusr sqlpass
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if __salt__['boto_rds.exists'](name, tags, region, key, keyid, profile):
         return True
 
@@ -264,9 +271,8 @@ def create_read_replica(name, source_name, db_instance_class=None,
 
         salt myminion boto_rds.create_read_replica replicaname source_name
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not __salt__['boto_rds.exists'](source_name, tags, region, key, keyid, profile):
         return False
     if __salt__['boto_rds.exists'](name, tags, region, key, keyid, profile):
@@ -305,9 +311,8 @@ def create_option_group(name, engine_name, major_engine_version,
         salt myminion boto_rds.create_option_group my-opt-group mysql 5.6 \
                 "group description"
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if __salt__['boto_rds.option_group_exists'](name, tags, region, key, keyid,
                                                 profile):
         return True
@@ -339,9 +344,8 @@ def create_parameter_group(name, db_parameter_group_family, description,
         salt myminion boto_rds.create_parameter_group my-param-group mysql5.6 \
                 "group description"
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if __salt__['boto_rds.parameter_group_exists'](name, tags, region, key,
                                                    keyid, profile):
         return True
@@ -361,9 +365,7 @@ def create_parameter_group(name, db_parameter_group_family, description,
         return False
 
 
-def create_subnet_group(name, db_subnet_group_description, subnet_ids,
-                        tags=None, region=None, key=None, keyid=None,
-                        profile=None):
+def create_subnet_group(name, description, subnet_ids, tags=None, region=None, key=None, keyid=None, profile=None):
     '''
     Create an RDS subnet group
 
@@ -373,16 +375,14 @@ def create_subnet_group(name, db_subnet_group_description, subnet_ids,
             "group description" '[subnet-12345678, subnet-87654321]' \
             region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if __salt__['boto_rds.subnet_group_exists'](name, tags, region, key, keyid,
                                                 profile):
         return True
     try:
-        rds = conn.create_db_subnet_group(name, db_subnet_group_description,
-                                          subnet_ids, tags)
-        if rds:
+        rds = conn.create_db_subnet_group(name, description, subnet_ids, tags)
+        if not rds:
             msg = 'Failed to create RDS subnet group {0}'.format(name)
             log.error(msg)
             return False
@@ -408,14 +408,13 @@ def update_parameter_group(name, parameters, apply_method="pending-reboot",
                 region=us-east-1
     '''
 
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not __salt__['boto_rds.parameter_group_exists'](name, tags, region, key,
                                                        keyid, profile):
         return False
     param_list = []
-    for key, value in parameters.iteritems():
+    for key, value in six.iteritems(parameters):
         item = (key, value, apply_method)
         param_list.append(item)
         if not len(param_list):
@@ -440,9 +439,8 @@ def describe(name, tags=None, region=None, key=None, keyid=None,
         salt myminion boto_rds.describe myrds
 
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not __salt__['boto_rds.exists'](name, tags, region, key, keyid,
                                        profile):
         return False
@@ -465,9 +463,8 @@ def get_endpoint(name, tags=None, region=None, key=None, keyid=None,
         salt myminion boto_rds.get_endpoint myrds
 
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not __salt__['boto_rds.exists'](name, tags, region, key, keyid,
                                        profile):
         return False
@@ -493,9 +490,7 @@ def delete(name, skip_final_snapshot=None, final_db_snapshot_identifier=None,
         salt myminion boto_rds.delete myrds skip_final_snapshot=True \
                 region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
 
     if not skip_final_snapshot or final_db_snapshot_identifier:
         raise SaltInvocationError('At least on of the following must'
@@ -523,9 +518,8 @@ def delete_option_group(name, region=None, key=None, keyid=None, profile=None):
         salt myminion boto_rds.delete_option_group my-opt-group \
                 region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         conn.delete_option_group(name)
         msg = 'Deleted RDS option group {0}.'.format(name)
@@ -548,9 +542,8 @@ def delete_parameter_group(name, region=None, key=None, keyid=None,
         salt myminion boto_rds.delete_parameter_group my-param-group \
                 region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         conn.delete_db_parameter_group(name)
         msg = 'Deleted RDS parameter group {0}.'.format(name)
@@ -573,9 +566,8 @@ def delete_subnet_group(name, region=None, key=None, keyid=None,
         salt myminion boto_rds.delete_subnet_group my-subnet-group \
                 region=us-east-1
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         conn.delete_db_subnet_group(name)
         msg = 'Deleted RDS subnet group {0}.'.format(name)
@@ -592,37 +584,3 @@ def _pythonize_dict(dictionary):
     _ret = dict((boto.utils.pythonize_name(k), _pythonize_dict(v) if
                  hasattr(v, 'keys') else v) for k, v in dictionary.items())
     return _ret
-
-
-def _get_conn(region, key, keyid, profile):
-    '''
-    Get a boto connection to RDS.
-    '''
-    if profile:
-        if isinstance(profile, string_types):
-            _profile = __salt__['config.option'](profile)
-        elif isinstance(profile, dict):
-            _profile = profile
-        key = _profile.get('key', None)
-        keyid = _profile.get('keyid', None)
-        region = _profile.get('region', None)
-
-    if not region and __salt__['config.option']('rds.region'):
-        region = __salt__['config.option']('rds.region')
-
-    if not region:
-        region = 'us-east-1'
-
-    if not key and __salt__['config.option']('rds.key'):
-        key = __salt__['config.option']('rds.key')
-    if not keyid and __salt__['config.option']('rds.keyid'):
-        keyid = __salt__['config.option']('rds.keyid')
-
-    try:
-        conn = boto.rds2.connect_to_region(region, aws_access_key_id=keyid,
-                                           aws_secret_access_key=key)
-    except boto.exception.NoAuthHandlerFound:
-        log.error('No authentication credentials found when attempting to'
-                  ' make boto rds connection.')
-        return None
-    return conn

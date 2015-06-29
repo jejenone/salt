@@ -4,6 +4,38 @@
 Requisites and Other Global State Arguments
 ===========================================
 
+Fire Event Notifications
+========================
+
+.. versionadded:: Beryllium
+
+The `fire_event` option in a state will cause the minion to send an event to
+the Salt Master upon completion of that individual state.
+
+The following example will cause the minion to send an event to the Salt Master
+with a tag of `salt/state_result/20150505121517276431/dasalt/nano` and the
+result of the state will be the data field of the event. Notice that the `name`
+of the state gets added to the tag.
+
+.. code-block:: yaml
+
+    nano_stuff:
+      pkg.installed:
+        - name: nano
+        - fire_event: True
+
+In the following example instead of setting `fire_event` to `True`,
+`fire_event` is set to an arbitrary string, which will cause the event to be
+sent with this tag:
+`salt/state_result/20150505121725642845/dasalt/custom/tag/nano/finished`
+
+.. code-block:: yaml
+
+    nano_stuff:
+      pkg.installed:
+        - name: nano
+        - fire_event: custom/tag/nano/finished
+
 Requisites
 ==========
 
@@ -294,6 +326,9 @@ The ``onchanges`` requisite makes a state only apply if the required states
 generate changes, and if the watched state's "result" is ``True``. This can be
 a useful way to execute a post hook after changing aspects of a system.
 
+If a state has multiple ``onchanges`` requisites then the state will trigger
+if any of the watched states changes.
+
 use
 ~~~
 
@@ -428,6 +463,11 @@ the specified commands return ``False``. The ``unless`` requisite operates
 as NOR and is useful in giving more granular control over when a state should
 execute.
 
+**NOTE**: Under the hood ``unless`` calls ``cmd.retcode`` with 
+``python_shell=True``.  This means the commands referenced by unless will be
+parsed by a shell, so beware of side-effects as this shell will be run with the
+same privileges as the salt-minion.
+
 .. code-block:: yaml
 
     vim:
@@ -443,7 +483,7 @@ exist (returns ``False``). The state will run if both commands return
 
 However, the state will not run if both commands return ``True``.
 
-Unless requisites are resolved for each name to which they are associated.
+Unless checks are resolved for each name to which they are associated.
 
 For example:
 
@@ -452,8 +492,8 @@ For example:
     deploy_app:
       cmd.run:
         - names:
-            - first_deploy_cmd
-            - second_deploy_cmd
+          - first_deploy_cmd
+          - second_deploy_cmd
         - unless: some_check
 
 In the above case, ``some_check`` will be run prior to _each_ name -- once for
@@ -467,6 +507,11 @@ Onlyif
 ``onlyif`` is the opposite of ``unless``. If all of the commands in ``onlyif``
 return ``True``, then the state is run. If any of the specified commands
 return ``False``, the state will not run.
+
+**NOTE**: Under the hood ``onlyif`` calls ``cmd.retcode`` with 
+``python_shell=True``.  This means the commands referenced by unless will be
+parsed by a shell, so beware of side-effects as this shell will be run with the
+same privileges as the salt-minion.
 
 .. code-block:: yaml
 
@@ -512,7 +557,7 @@ at the end of a state run, after all states have completed.
 
  configure-apache2:
    file.managed:
-     - path: /etc/apache2/apache2.conf
+     - name: /etc/apache2/apache2.conf
      - source: salt://apache2/apache2.conf
 
 This example will cause apache2 to be restarted when the apache2.conf file is
@@ -526,7 +571,7 @@ changed, but the apache2 restart will happen at the end of the state run.
 
  configure-apache2:
    file.managed:
-     - path: /etc/apache2/apache2.conf
+     - name: /etc/apache2/apache2.conf
      - source: salt://apache2/apache2.conf
      - listen_in:
        - service: apache2
@@ -542,11 +587,16 @@ check_cmd
 Check Command is used for determining that a state did or did not run as
 expected.
 
+**NOTE**: Under the hood ``check_cmd`` calls ``cmd.retcode`` with 
+``python_shell=True``.  This means the commands referenced by unless will be
+parsed by a shell, so beware of side-effects as this shell will be run with the
+same privileges as the salt-minion.
+
 .. code-block:: yaml
 
     comment-repo:
       file.replace:
-        - path: /etc/yum.repos.d/fedora.repo
+        - name: /etc/yum.repos.d/fedora.repo
         - pattern: ^enabled=0
         - repl: enabled=1
         - check_cmd:

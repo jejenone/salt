@@ -17,7 +17,7 @@ configuration at:
       # SoftLayer account api key
       user: MYLOGIN
       apikey: JVkbSJDGHSDKUKSDJfhsdklfjgsjdkflhjlsdfffhgdgjkenrtuinv
-      provider: softlayer
+      driver: softlayer
 
 The SoftLayer Python Library needs to be installed in order to use the
 SoftLayer salt.cloud modules. See: https://pypi.python.org/pypi/SoftLayer
@@ -35,10 +35,9 @@ import logging
 import time
 
 # Import salt cloud libs
+import salt.utils.cloud
 import salt.config as config
 from salt.exceptions import SaltCloudSystemExit
-from salt.cloud.libcloudfuncs import *   # pylint: disable=W0614,W0401
-from salt.utils import namespaced_function
 
 # Attempt to import softlayer lib
 try:
@@ -50,14 +49,11 @@ except ImportError:
 # Get logging started
 log = logging.getLogger(__name__)
 
-# Redirect SoftLayer functions to this module namespace
-script = namespaced_function(script, globals())
-
 
 # Only load in this module if the SoftLayer configurations are in place
 def __virtual__():
     '''
-    Set up the libcloud functions and check for SoftLayer configurations.
+    Check for SoftLayer configurations.
     '''
     if not HAS_SLLIBS:
         return False
@@ -77,6 +73,21 @@ def get_configured_provider():
         __active_provider_name__ or 'softlayer',
         ('apikey',)
     )
+
+
+def script(vm_):
+    '''
+    Return the script deployment object
+    '''
+    deploy_script = salt.utils.cloud.os_script(
+        config.get_cloud_config_value('script', vm_, __opts__),
+        vm_,
+        __opts__,
+        salt.utils.cloud.salt_config_to_yaml(
+            salt.utils.cloud.minion_config(__opts__, vm_)
+        )
+    )
+    return deploy_script
 
 
 def get_conn(service='SoftLayer_Virtual_Guest'):
@@ -223,6 +234,12 @@ def create(vm_):
     '''
     Create a single VM from a data dict
     '''
+    # Check for required profile parameters before sending any API calls.
+    if config.is_profile_configured(__opts__,
+                                    __active_provider_name__ or 'softlayer',
+                                    vm_['profile']) is False:
+        return False
+
     salt.utils.cloud.fire_event(
         'event',
         'starting create',
@@ -308,7 +325,7 @@ def create(vm_):
     except Exception as exc:
         log.error(
             'Error creating {0} on SoftLayer\n\n'
-            'The following exception was thrown by libcloud when trying to '
+            'The following exception was thrown when trying to '
             'run the initial deployment: \n{1}'.format(
                 vm_['name'], str(exc)
             ),
@@ -408,7 +425,7 @@ def create(vm_):
             'host': ip_address,
             'username': ssh_username,
             'password': passwd,
-            'script': deploy_script.script,
+            'script': deploy_script,
             'name': vm_['name'],
             'tmp_dir': config.get_cloud_config_value(
                 'tmp_dir', vm_, __opts__, default='/tmp/.saltcloud'
@@ -573,6 +590,8 @@ def list_nodes(call=None):
             ret[node]['public_ips'] = nodes[node]['primaryIpAddress']
         if 'primaryBackendIpAddress' in nodes[node]:
             ret[node]['private_ips'] = nodes[node]['primaryBackendIpAddress']
+        if 'status' in nodes[node]:
+            ret[node]['state'] = str(nodes[node]['status']['name'])
     return ret
 
 

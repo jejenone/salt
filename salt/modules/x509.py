@@ -12,12 +12,10 @@ import os
 import logging
 import hashlib
 import glob
-import M2Crypto
 import random
 import ctypes
 import tempfile
 import yaml
-import subprocess
 import re
 import datetime
 import ast
@@ -25,8 +23,19 @@ import ast
 # Import salt libs
 import salt.utils
 import salt.exceptions
+import salt.ext.six as six
 from salt.utils.odict import OrderedDict
 from salt.ext.six.moves import range  # pylint: disable=import-error,redefined-builtin
+from salt.state import STATE_INTERNAL_KEYWORDS as _STATE_INTERNAL_KEYWORDS
+
+# Import 3rd Party Libs
+try:
+    import M2Crypto
+    HAS_M2 = True
+except ImportError:
+    HAS_M2 = False
+
+__virtualname__ = 'x509'
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +60,13 @@ EXT_NAME_MAPPINGS = OrderedDict([
                     ])
 
 CERT_DEFAULTS = {'days_valid': 365, 'version': 3, 'serial_bits': 64, 'algorithm': 'sha256'}
+
+
+def __virtual__():
+    if HAS_M2:
+        return __virtualname__
+    else:
+        return False
 
 
 class _Ctx(ctypes.Structure):
@@ -120,8 +136,7 @@ def _parse_openssl_req(csr_filename):
     '''
     cmd = ('openssl req -text -noout -in {0}'.format(csr_filename))
 
-    output = subprocess.check_output(cmd.split(),
-        stderr=subprocess.STDOUT)
+    output = __salt__['cmd.run_stderr'](cmd)
 
     output = re.sub(r': rsaEncryption', ':', output)
     output = re.sub(r'[0-9a-f]{2}:', '', output)
@@ -143,7 +158,7 @@ def _get_csr_extensions(csr):
     csrtempfile.close()
     csrexts = csryaml['Certificate Request']['Data']['Requested Extensions']
 
-    for short_name, long_name in EXT_NAME_MAPPINGS.iteritems():
+    for short_name, long_name in six.iteritems(EXT_NAME_MAPPINGS):
         if long_name in csrexts:
             ret[short_name] = csrexts[long_name]
 
@@ -158,8 +173,7 @@ def _parse_openssl_crl(crl_filename):
     '''
     cmd = ('openssl crl -text -noout -in {0}'.format(crl_filename))
 
-    output = subprocess.check_output(cmd.split(),
-        stderr=subprocess.STDOUT)
+    output = __salt__['cmd.run_stderr'](cmd)
 
     crl = {}
     for line in output.split('\n'):
@@ -204,7 +218,7 @@ def _parse_openssl_crl(crl_filename):
         rev_sn = revoked.split('\n')[0].strip()
         revoked = rev_sn + ':\n' + '\n'.join(revoked.split('\n')[1:])
         rev_yaml = yaml.safe_load(revoked)
-        for rev_item, rev_values in rev_yaml.iteritems():               # pylint: disable=unused-variable
+        for rev_item, rev_values in six.iteritems(rev_yaml):               # pylint: disable=unused-variable
             if 'Revocation Date' in rev_values:
                 rev_date = datetime.datetime.strptime(
                         rev_values['Revocation Date'], "%b %d %H:%M:%S %Y %Z")
@@ -215,6 +229,15 @@ def _parse_openssl_crl(crl_filename):
     crl['Revoked Certificates'] = rev
 
     return crl
+
+
+def _get_signing_policy(name):
+    policies = __salt__['pillar.get']('x509_signing_policies', None)
+    if policies:
+        signing_policy = policies.get(name)
+        if signing_policy:
+            return signing_policy
+    return __salt__['config.get']('x509_signing_policies', {}).get(name)
 
 
 def _pretty_hex(hex_str):
@@ -249,7 +272,7 @@ def _parse_subject(subject):
     '''
     ret = {}
     nids = []
-    for nid_name, nid_num in subject.nid.iteritems():
+    for nid_name, nid_num in six.iteritems(subject.nid):
         if nid_num in nids:
             continue
         val = getattr(subject, nid_name)
@@ -780,10 +803,10 @@ def sign_remote_certificate(argdic, **kwargs):
 
     signing_policy = {}
     if 'signing_policy' in argdic:
-        if argdic['signing_policy'] not in __salt__['config.get']('x509_signing_policies'):
+        signing_policy = _get_signing_policy(argdic['signing_policy'])
+        if not signing_policy:
             return 'Signing policy {0} does not exist.'.format(argdic['signing_policy'])
 
-        signing_policy = __salt__['config.get']('x509_signing_policies')[argdic['signing_policy']]
         if isinstance(signing_policy, list):
             dict_ = {}
             for item in signing_policy:
@@ -802,7 +825,7 @@ def sign_remote_certificate(argdic, **kwargs):
         return str(except_)
 
 
-def get_signing_policy(signing_policy):
+def get_signing_policy(signing_policy_name):
     '''
     Returns the details of a names signing policy, including the text of the public key that will be used
     to sign it. Does not return the private key.
@@ -813,9 +836,9 @@ def get_signing_policy(signing_policy):
 
         salt '*' x509.get_signing_policy www
     '''
-    if signing_policy not in __salt__['config.get']('x509_signing_policies'):
-        return 'Signing policy {0} does not exist.'.format(signing_policy)
-    signing_policy = __salt__['config.get']('x509_signing_policies')[signing_policy]
+    signing_policy = _get_signing_policy(signing_policy_name)
+    if not signing_policy:
+        return 'Signing policy {0} does not exist.'.format(signing_policy_name)
     if isinstance(signing_policy, list):
         dict_ = {}
         for item in signing_policy:
@@ -902,7 +925,7 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
     signing_cert:
         A certificate matching the private key that will be used to sign this certificate. This is used
         to populate the issuer values in the resulting certificate. Do not include this value for
-        self-signed certificateds.
+        self-signed certificates.
 
     public_key:
         The public key to be included in this certificate. This can be sourced from a public key,
@@ -936,7 +959,7 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
         public key in this certificate. Note that this is not the exact same hashing method used by
         OpenSSL when using the hash value.
 
-        ``authorityKeyIdentifier`` only supports the value ``keyid,issuer:always``. This value will
+        ``authorityKeyIdentifier`` Use values acceptable to the openssl CLI tools. This will
         automatically populate ``authorityKeyIdentifier`` with the ``subjectKeyIdentifier`` of
         ``signing_cert``. If this is a self-signed cert these values will be the same.
 
@@ -1057,8 +1080,13 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
         if 'public_key' in kwargs:
             # Strip newlines to make passing through as cli functions easier
             kwargs['public_key'] = get_public_key(kwargs['public_key']).replace('\n', '')
+
         # Remove system entries in kwargs
-        kwargs = dict((k, v) for k, v in kwargs.iteritems() if not k.startswith('__'))
+        # Including listen_in and preqreuired because they are not included in STATE_INTERNAL_KEYWORDS
+        # for salt 2014.7.2
+        for ignore in list(_STATE_INTERNAL_KEYWORDS) + ['listen_in', 'preqrequired']:
+            kwargs.pop(ignore, None)
+
         cert_txt = __salt__['publish.publish'](tgt=ca_server,
                                                fun='x509.sign_remote_certificate',
                                                arg=str(kwargs))[ca_server]
@@ -1070,7 +1098,7 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
 
     signing_policy = {}
     if 'signing_policy' in kwargs:
-        signing_policy = __salt__['config.get']('x509_signing_policies')[kwargs['signing_policy']]
+        signing_policy = _get_signing_policy(kwargs['signing_policy'])
         if isinstance(signing_policy, list):
             dict_ = {}
             for item in signing_policy:
@@ -1080,7 +1108,7 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
     # Overwrite any arguments in kwargs with signing_policy
     kwargs.update(signing_policy)
 
-    for prop, default in CERT_DEFAULTS.iteritems():
+    for prop, default in six.iteritems(CERT_DEFAULTS):
         if prop not in kwargs:
             kwargs[prop] = default
 
@@ -1118,7 +1146,7 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
 
     cert.set_pubkey(_get_public_key_obj(kwargs['public_key']))
 
-    for entry, num in subject.nid.iteritems():                  # pylint: disable=unused-variable
+    for entry, num in six.iteritems(subject.nid):                  # pylint: disable=unused-variable
         if entry in kwargs:
             setattr(subject, entry, kwargs[entry])
 
@@ -1128,8 +1156,8 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
         signing_cert = cert
     cert.set_issuer(signing_cert.get_subject())
 
-    for extname, extlongname in EXT_NAME_MAPPINGS.iteritems():
-        if extname not in kwargs or extlongname not in kwargs or extname not in csrexts or extlongname not in csrexts:
+    for extname, extlongname in six.iteritems(EXT_NAME_MAPPINGS):
+        if (extname in kwargs or extlongname in kwargs or extname in csrexts or extlongname in csrexts) is False:
             continue
 
         # Use explicitly set values first, fall back to CSR values.
@@ -1145,9 +1173,6 @@ def create_certificate(path=None, text=False, ca_server=None, **kwargs):
 
         issuer = None
         if extname == 'authorityKeyIdentifier':
-            if not extval == 'keyid,issuer:always':
-                raise salt.exceptions.SaltInvocationError(
-                    'authorityKeyIdentifier must be keyid,issuer:always')
             issuer = signing_cert
 
         ext = _new_extension(name=extname, value=extval, critical=critical, issuer=issuer)
@@ -1217,12 +1242,12 @@ def create_csr(path=None, text=False, **kwargs):
         raise salt.exceptions.SaltInvocationError('public_key is required')
     csr.set_pubkey(_get_public_key_obj(kwargs['public_key']))
 
-    for entry, num in subject.nid.iteritems():                  # pylint: disable=unused-variable
+    for entry, num in six.iteritems(subject.nid):                  # pylint: disable=unused-variable
         if entry in kwargs:
             setattr(subject, entry, kwargs[entry])
 
     extstack = M2Crypto.X509.X509_Extension_Stack()
-    for extname, extlongname in EXT_NAME_MAPPINGS.iteritems():
+    for extname, extlongname in six.iteritems(EXT_NAME_MAPPINGS):
         if extname not in kwargs or extlongname not in kwargs:
             continue
 
@@ -1327,8 +1352,7 @@ def verify_crl(crl, cert):
 
     cmd = ('openssl crl -noout -in {0} -CAfile {1}'.format(crltempfile.name, certtempfile.name))
 
-    output = subprocess.check_output(cmd.split(),
-        stderr=subprocess.STDOUT)
+    output = __salt__['cmd.run_stderr'](cmd)
 
     crltempfile.close()
     certtempfile.close()

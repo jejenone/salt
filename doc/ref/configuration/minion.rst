@@ -82,10 +82,24 @@ The option can can also be set to a list of masters, enabling
 
 .. versionadded:: 2014.7.0
 
-Default: ``str``
+Default: ``standard``
 
-The type of the :conf_minion:`master` variable. Can be either ``func`` or
-``failover``.
+The type of the :conf_minion:`master` variable. Can be ``standard``, ``failover`` or
+``func``.
+
+.. code-block:: yaml
+
+    master_type: failover
+
+If this option is set to ``failover``, :conf_minion:`master` must be a list of
+master addresses. The minion will then try each master in the order specified
+in the list until it successfully connects.  :conf_minion:`master_alive_interval`
+must also be set, this determines how often the minion will verify the presence
+of the master.
+
+.. code-block:: yaml
+
+    master_type: func
 
 If the master needs to be dynamically assigned by executing a function instead
 of reading in the static master value, set this to ``func``. This can be used
@@ -93,19 +107,16 @@ to manage the minion's master setting from an execution module. By simply
 changing the algorithm in the module to return a new master ip/fqdn, restart
 the minion and it will connect to the new master.
 
+``master_alive_interval``
+-------------------------
 
 .. code-block:: yaml
 
-    master_type: func
+    master_alive_interval: 30
 
-If this option is set to ``failover``, :conf_minion:`master` must be a list of
-master addresses. The minion will then try each master in the order specified
-in the list until it successfully connects.
-
-
-.. code-block:: yaml
-
-    master_type: failover
+Configures how often, in seconds, the minion will verify that the current
+master is alive and responding.  The minion will try to establish a connection
+to the next master in the list if it finds the existing one is dead.
 
 ``master_shuffle``
 ------------------
@@ -121,6 +132,21 @@ Python's :func:`random.shuffle <python2:random.shuffle>` method.
 .. code-block:: yaml
 
     master_shuffle: True
+
+.. conf_minion:: retry_dns
+
+``retry_dns``
+---------------
+
+Default: ``30``
+
+Set the number of seconds to wait before attempting to resolve
+the master hostname if name resolution fails. Defaults to 30 seconds.
+Set to zero if the minion should shutdown and not retry.
+
+.. code-block:: yaml
+    
+    retry_dns: 30
 
 .. conf_minion:: master_port
 
@@ -149,7 +175,29 @@ The user to run the Salt processes
 
     user: root
 
+.. conf_minion:: sudo_runas
+
+``sudo_runas``
+--------------
+
+Default: None
+
+The user to run salt remote execution commands as via sudo. If this option is
+enabled then sudo will be used to change the active user executing the remote
+command. If enabled the user will need to be allowed access via the sudoers file
+for the user that the salt minion is configured to run as. The most common
+option would be to use the root user. If this option is set the ``user`` option
+should also be set to a non-root user. If migrating from a root minion to a non
+root minion the minion cache should be cleared and the minion pki directory will
+need to be changed to the ownership of the new user.
+
+.. code-block:: yaml
+
+    sudo_user: root
+
+
 .. conf_minion:: pidfile
+
 
 ``pidfile``
 -----------
@@ -276,6 +324,22 @@ executed. By default this feature is disabled, to enable set cache_jobs to
 
     cache_jobs: False
 
+.. conf_minion:: grains_cache
+
+``grains_cache``
+----------------
+
+Default: ``False``
+
+The minion can locally cache grain data instead of refreshing the data
+each time the grain is referenced. By default this feature is disabled,
+to enable set grains_cache to ``True``.
+
+.. code-block:: yaml
+
+    cache_jobs: False
+
+
 .. conf_minion:: sock_dir
 
 ``sock_dir``
@@ -401,21 +465,6 @@ behavior is to have time-frame within all minions try to reconnect.
 .. code-block:: yaml
 
     recon_randomize: True
-
-.. conf_minion:: dns_check
-
-``dns_check``
--------------
-
-Default: ``True``
-
-When healing, a dns_check is run. This is to make sure that the originally
-resolved dns has not changed. If this is something that does not happen in your
-environment, set this value to ``False``.
-
-.. code-block:: yaml
-
-    dns_check: True
 
 .. conf_minion:: cache_sreqs
 

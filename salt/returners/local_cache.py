@@ -10,7 +10,7 @@ import errno
 import logging
 import os
 import shutil
-import datetime
+import time
 import hashlib
 
 # Import salt libs
@@ -69,35 +69,6 @@ def _walk_through(job_dir):
             yield jid, job, t_path, final
 
 
-def _format_job_instance(job):
-    '''
-    Format the job instance correctly
-    '''
-    ret = {'Function': job.get('fun', 'unknown-function'),
-           'Arguments': list(job.get('arg', [])),
-           # unlikely but safeguard from invalid returns
-           'Target': job.get('tgt', 'unknown-target'),
-           'Target-type': job.get('tgt_type', []),
-           'User': job.get('user', 'root')}
-
-    if 'metadata' in job:
-        ret['Metadata'] = job.get('metadata', {})
-    else:
-        if 'kwargs' in job:
-            if 'metadata' in job['kwargs']:
-                ret['Metadata'] = job['kwargs'].get('metadata', {})
-    return ret
-
-
-def _format_jid_instance(jid, job):
-    '''
-    Format the jid correctly
-    '''
-    ret = _format_job_instance(job)
-    ret.update({'StartTime': salt.utils.jid.jid_to_time(jid)})
-    return ret
-
-
 #TODO: add to returner docs-- this is a new one
 def prep_jid(nocache=False, passed_jid=None):
     '''
@@ -121,10 +92,10 @@ def prep_jid(nocache=False, passed_jid=None):
         if passed_jid is None:
             return prep_jid(nocache=nocache)
 
-    with salt.utils.fopen(os.path.join(jid_dir_, 'jid'), 'w+') as fn_:
+    with salt.utils.fopen(os.path.join(jid_dir_, 'jid'), 'wb+') as fn_:
         fn_.write(jid)
     if nocache:
-        with salt.utils.fopen(os.path.join(jid_dir_, 'nocache'), 'w+') as fn_:
+        with salt.utils.fopen(os.path.join(jid_dir_, 'nocache'), 'wb+') as fn_:
             fn_.write('')
 
     return jid
@@ -277,11 +248,11 @@ def get_jid(jid):
 
 def get_jids():
     '''
-    Return a list of all job ids
+    Return a dict mapping all job ids to job information
     '''
     ret = {}
     for jid, job, _, _ in _walk_through(_job_dir()):
-        ret[jid] = _format_jid_instance(jid, job)
+        ret[jid] = salt.utils.jid.format_jid_instance(jid, job)
     return ret
 
 
@@ -290,9 +261,9 @@ def clean_old_jobs():
     Clean out the old jobs from the job cache
     '''
     if __opts__['keep_jobs'] != 0:
-        cur = datetime.datetime.now()
-
+        cur = time.time()
         jid_root = _job_dir()
+
         if not os.path.exists(jid_root):
             return
 
@@ -305,26 +276,7 @@ def clean_old_jobs():
                     # No jid file means corrupted cache entry, scrub it
                     shutil.rmtree(f_path)
                 else:
-                    with salt.utils.fopen(jid_file, 'r') as fn_:
-                        jid = fn_.read()
-                    if len(jid) < 18:
-                        # Invalid jid, scrub the dir
+                    jid_ctime = os.stat(jid_file).st_ctime
+                    hours_difference = (cur - jid_ctime) / 3600.0
+                    if hours_difference > __opts__['keep_jobs']:
                         shutil.rmtree(f_path)
-                    else:
-                        # Parse the jid into a proper datetime object.
-                        # We only parse down to the minute, since keep
-                        # jobs is measured in hours, so a minute
-                        # difference is not important.
-                        try:
-                            jidtime = datetime.datetime(int(jid[0:4]),
-                                                        int(jid[4:6]),
-                                                        int(jid[6:8]),
-                                                        int(jid[8:10]),
-                                                        int(jid[10:12]))
-                        except ValueError:
-                            # Invalid jid, scrub the dir
-                            shutil.rmtree(f_path)
-                        difference = cur - jidtime
-                        hours_difference = salt.utils.total_seconds(difference) / 3600.0
-                        if hours_difference > __opts__['keep_jobs']:
-                            shutil.rmtree(f_path)

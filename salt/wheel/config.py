@@ -52,10 +52,12 @@ def update_config(file_name, yaml_contents):
     specified by ``default_include``.
     This folder is named ``master.d`` by
     default. Please look at
-    http://docs.saltstack.com/en/latest/ref/configuration/master.html#include-configuration
+    :conf_master:`include-configuration`
     for more information.
 
-    Example low data::
+    Example low data:
+
+    .. code-block:: yaml
 
         data = {
             'username': 'salt',
@@ -66,7 +68,6 @@ def update_config(file_name, yaml_contents):
             'client': 'wheel',
             'eauth': 'pam',
         }
-
     '''
     file_name = '{0}{1}'.format(file_name, '.conf')
     dir_path = os.path.join(__opts__['config_dir'],
@@ -76,7 +77,7 @@ def update_config(file_name, yaml_contents):
 
         if not os.path.exists(dir_path):
             log.debug('Creating directory {0}'.format(dir_path))
-            os.makedirs(dir_path, 755)
+            os.makedirs(dir_path, 0o755)
 
         file_path = os.path.join(dir_path, file_name)
         with salt.utils.fopen(file_path, 'w') as fp_:

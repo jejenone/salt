@@ -17,7 +17,7 @@ configuration at:
       # SoftLayer account api key
       user: MYLOGIN
       apikey: JVkbSJDGHSDKUKSDJfhsdklfjgsjdkflhjlsdfffhgdgjkenrtuinv
-      provider: softlayer_hw
+      driver: softlayer_hw
 
 The SoftLayer Python Library needs to be installed in order to use the
 SoftLayer salt.cloud modules. See: https://pypi.python.org/pypi/SoftLayer
@@ -33,12 +33,12 @@ import copy
 import pprint
 import logging
 import time
+import decimal
 
 # Import salt cloud libs
+import salt.utils.cloud
 import salt.config as config
 from salt.exceptions import SaltCloudSystemExit
-from salt.cloud.libcloudfuncs import *   # pylint: disable=W0614,W0401
-from salt.utils import namespaced_function
 
 # Attempt to import softlayer lib
 try:
@@ -51,14 +51,10 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-# Redirect SoftLayer functions to this module namespace
-script = namespaced_function(script, globals())
-
-
 # Only load in this module if the SoftLayer configurations are in place
 def __virtual__():
     '''
-    Set up the libcloud functions and check for SoftLayer configurations.
+    Check for SoftLayer configurations.
     '''
     if not HAS_SLLIBS:
         return False
@@ -78,6 +74,21 @@ def get_configured_provider():
         __active_provider_name__ or 'softlayer_hw',
         ('apikey',)
     )
+
+
+def script(vm_):
+    '''
+    Return the script deployment object
+    '''
+    deploy_script = salt.utils.cloud.os_script(
+        config.get_cloud_config_value('script', vm_, __opts__),
+        vm_,
+        __opts__,
+        salt.utils.cloud.salt_config_to_yaml(
+            salt.utils.cloud.minion_config(__opts__, vm_)
+        )
+    )
+    return deploy_script
 
 
 def get_conn(service='SoftLayer_Hardware'):
@@ -118,6 +129,8 @@ def avail_locations(call=None):
 
     available = conn.getAvailableLocations(id=50)
     for location in available:
+        if location.get('isAvailable', 0) is 0:
+            continue
         ret[location['locationId']]['available'] = True
 
     return ret
@@ -194,6 +207,12 @@ def create(vm_):
     '''
     Create a single VM from a data dict
     '''
+    # Check for required profile parameters before sending any API calls.
+    if config.is_profile_configured(__opts__,
+                                    __active_provider_name__ or 'softlayer_hw',
+                                    vm_['profile']) is False:
+        return False
+
     salt.utils.cloud.fire_event(
         'event',
         'starting create',
@@ -289,7 +308,7 @@ def create(vm_):
     except Exception as exc:
         log.error(
             'Error creating {0} on SoftLayer\n\n'
-            'The following exception was thrown by libcloud when trying to '
+            'The following exception was thrown when trying to '
             'run the initial deployment: \n{1}'.format(
                 vm_['name'], str(exc)
             ),
@@ -365,7 +384,7 @@ def create(vm_):
             'host': ip_address,
             'username': ssh_username,
             'password': passwd,
-            'script': deploy_script.script,
+            'script': deploy_script,
             'name': vm_['name'],
             'tmp_dir': config.get_cloud_config_value(
                 'tmp_dir', vm_, __opts__, default='/tmp/.saltcloud'
@@ -619,3 +638,56 @@ def list_vlans(call=None):
 
     conn = get_conn(service='Account')
     return conn.getNetworkVlans()
+
+
+def show_pricing(kwargs=None, call=None):
+    '''
+    Show pricing for a particular profile. This is only an estimate, based on
+    unofficial pricing sources.
+
+    CLI Examples:
+
+    .. code-block:: bash
+
+        salt-cloud -f show_pricing my-softlayerhw-config profile=my-profile
+
+    If pricing sources have not been cached, they will be downloaded. Once they
+    have been cached, they will not be updated automatically. To manually update
+    all prices, use the following command:
+
+    .. code-block:: bash
+
+        salt-cloud -f update_pricing <provider>
+
+    .. versionadded:: Beryllium
+    '''
+    profile = __opts__['profiles'].get(kwargs['profile'], {})
+    if not profile:
+        return {'Error': 'The requested profile was not found'}
+
+    # Make sure the profile belongs to Softlayer HW
+    provider = profile.get('provider', '0:0')
+    comps = provider.split(':')
+    if len(comps) < 2 or comps[1] != 'softlayer_hw':
+        return {'Error': 'The requested profile does not belong to Softlayer HW'}
+
+    raw = {}
+    ret = {}
+    ret['per_hour'] = 0
+    conn = get_conn(service='SoftLayer_Product_Item_Price')
+    for item in profile:
+        if item in ('profile', 'provider', 'location'):
+            continue
+        price = conn.getObject(id=profile[item])
+        raw[item] = price
+        ret['per_hour'] += decimal.Decimal(price.get('hourlyRecurringFee', 0))
+
+    ret['per_day'] = ret['per_hour'] * 24
+    ret['per_week'] = ret['per_day'] * 7
+    ret['per_month'] = ret['per_day'] * 30
+    ret['per_year'] = ret['per_week'] * 52
+
+    if kwargs.get('raw', False):
+        ret['_raw'] = raw
+
+    return {profile['profile']: ret}

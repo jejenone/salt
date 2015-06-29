@@ -16,6 +16,7 @@ import salt.client.ssh.shell
 import salt.client.ssh
 import salt.utils
 import salt.utils.thin
+import salt.utils.url
 import salt.roster
 import salt.state
 import salt.loader
@@ -101,20 +102,22 @@ def lowstate_file_refs(chunks, extras=''):
     return refs
 
 
-def salt_refs(data):
+def salt_refs(data, ret=None):
     '''
     Pull salt file references out of the states
     '''
     proto = 'salt://'
-    ret = []
+    if ret is None:
+        ret = []
     if isinstance(data, str):
-        if data.startswith(proto):
-            return [data]
+        if data.startswith(proto) and data not in ret:
+            ret.append(data)
     if isinstance(data, list):
         for comp in data:
-            if isinstance(comp, str):
-                if comp.startswith(proto):
-                    ret.append(comp)
+            salt_refs(comp, ret)
+    if isinstance(data, dict):
+        for comp in data:
+            salt_refs(data[comp], ret)
     return ret
 
 
@@ -128,13 +131,13 @@ def prep_trans_tar(file_client, chunks, file_refs, pillar=None):
     lowfn = os.path.join(gendir, 'lowstate.json')
     pillarfn = os.path.join(gendir, 'pillar.json')
     sync_refs = [
-            ['salt://_modules'],
-            ['salt://_states'],
-            ['salt://_grains'],
-            ['salt://_renderers'],
-            ['salt://_returners'],
-            ['salt://_outputters'],
-            ['salt://_utils'],
+            [salt.utils.url.create('_modules')],
+            [salt.utils.url.create('_states')],
+            [salt.utils.url.create('_grains')],
+            [salt.utils.url.create('_renderers')],
+            [salt.utils.url.create('_returners')],
+            [salt.utils.url.create('_outputters')],
+            [salt.utils.url.create('_utils')],
             ]
     with salt.utils.fopen(lowfn, 'w+') as fp_:
         fp_.write(json.dumps(chunks))
@@ -148,7 +151,7 @@ def prep_trans_tar(file_client, chunks, file_refs, pillar=None):
             os.makedirs(env_root)
         for ref in file_refs[saltenv]:
             for name in ref:
-                short = name[7:]
+                short = salt.utils.url.parse(name)[0]
                 path = file_client.cache_file(name, saltenv)
                 if path:
                     tgt = os.path.join(env_root, short)
@@ -156,7 +159,7 @@ def prep_trans_tar(file_client, chunks, file_refs, pillar=None):
                     if not os.path.isdir(tgt_dir):
                         os.makedirs(tgt_dir)
                     shutil.copy(path, tgt)
-                    break
+                    continue
                 files = file_client.cache_dir(name, saltenv)
                 if files:
                     for filename in files:
@@ -172,7 +175,7 @@ def prep_trans_tar(file_client, chunks, file_refs, pillar=None):
                         if not os.path.isdir(tgt_dir):
                             os.makedirs(tgt_dir)
                         shutil.copy(filename, tgt)
-                    break
+                    continue
     cwd = os.getcwd()
     os.chdir(gendir)
     with closing(tarfile.open(trans_tar, 'w:gz')) as tfp:

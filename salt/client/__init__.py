@@ -91,7 +91,8 @@ def get_local_client(
     if opts['transport'] == 'raet':
         import salt.client.raet
         return salt.client.raet.LocalClient(mopts=opts)
-    elif opts['transport'] == 'zeromq':
+    # TODO: AIO core is separate from transport
+    elif opts['transport'] in ('zeromq', 'tcp'):
         return LocalClient(mopts=opts, skip_perm_errors=skip_perm_errors)
 
 
@@ -397,8 +398,8 @@ class LocalClient(object):
         .. code-block:: python
 
             >>> returns = local.cmd_batch('*', 'state.highstate', bat='10%')
-            >>> for return in returns:
-            ...     print return
+            >>> for ret in returns:
+            ...     print(ret)
             {'jerry': {...}}
             {'dave': {...}}
             {'stewart': {...}}
@@ -502,6 +503,7 @@ class LocalClient(object):
             * ``grain`` - Match based on a grain comparison
             * ``grain_pcre`` - Grain comparison with a regex
             * ``pillar`` - Pillar data comparison
+            * ``pillar_pcre`` - Pillar data comparison with a regex
             * ``nodegroup`` - Match on nodegroup
             * ``range`` - Use a Range server for matching
             * ``compound`` - Pass a compound match string
@@ -627,13 +629,13 @@ class LocalClient(object):
         The function signature is the same as :py:meth:`cmd` with the
         following exceptions.
 
-        :return: A generator
+        :return: A generator yielding the individual minion returns
 
         .. code-block:: python
 
             >>> ret = local.cmd_iter('*', 'test.ping')
             >>> for i in ret:
-            ...     print i
+            ...     print(i)
             {'jerry': {'ret': True}}
             {'dave': {'ret': True}}
             {'stewart': {'ret': True}}
@@ -653,9 +655,9 @@ class LocalClient(object):
         else:
             for fn_ret in self.get_iter_returns(pub_data['jid'],
                                                 pub_data['minions'],
-                                                self._get_timeout(timeout),
-                                                tgt,
-                                                expr_form,
+                                                timeout=self._get_timeout(timeout),
+                                                tgt=tgt,
+                                                tgt_type=expr_form,
                                                 **kwargs):
                 if not fn_ret:
                     continue
@@ -672,19 +674,21 @@ class LocalClient(object):
             kwarg=None,
             **kwargs):
         '''
-        Blocks while waiting for individual minions to return.
+        Yields the individual minion returns as they come in, or None
+            when no returns are available.
 
         The function signature is the same as :py:meth:`cmd` with the
         following exceptions.
 
-        :returns: None until the next minion returns. This allows for actions
-            to be injected in between minion returns.
+        :returns: A generator yielding the individual minion returns, or None
+            when no returns are available. This allows for actions to be
+            injected in between minion returns.
 
         .. code-block:: python
 
-            >>> ret = local.cmd_iter('*', 'test.ping')
+            >>> ret = local.cmd_iter_no_block('*', 'test.ping')
             >>> for i in ret:
-            ...     print i
+            ...     print(i)
             None
             {'jerry': {'ret': True}}
             {'dave': {'ret': True}}
@@ -706,9 +710,10 @@ class LocalClient(object):
         else:
             for fn_ret in self.get_iter_returns(pub_data['jid'],
                                                 pub_data['minions'],
-                                                timeout,
-                                                tgt,
-                                                expr_form,
+                                                timeout=timeout,
+                                                tgt=tgt,
+                                                tgt_type=expr_form,
+                                                block=False,
                                                 **kwargs):
                 yield fn_ret
 
@@ -826,7 +831,8 @@ class LocalClient(object):
             for tag in tags_regex:
                 tag_search.append(re.compile(tag))
         while True:
-            if self.opts.get('transport') == 'zeromq':
+            # TODO: this is a check of event type, NOT transport type!
+            if self.opts.get('transport') in ('zeromq', 'tcp'):
                 try:
                     raw = event.get_event_noblock()
                     if gather_errors:
@@ -860,6 +866,7 @@ class LocalClient(object):
             tgt_type='glob',
             expect_minions=False,
             gather_errors=True,
+            block=True,
             **kwargs):
         '''
         Watch the event system and return job data as it comes in
@@ -890,7 +897,6 @@ class LocalClient(object):
         except Exception as exc:
             log.warning('Returner unavailable: {exc}'.format(exc=exc))
         # Wait for the hosts to check in
-        syndic_wait = 0
         last_time = False
         # iterator for this job's return
         if self.opts['order_masters']:
@@ -953,8 +959,8 @@ class LocalClient(object):
                     # if additional lower-level masters deliver their lists of expected
                     # minions.
                     break
-           # If we get here we may not have gathered the minion list yet. Keep waiting
-           # for all lower-level masters to respond with their minion lists
+            # If we get here we may not have gathered the minion list yet. Keep waiting
+            # for all lower-level masters to respond with their minion lists
 
             # let start the timeouts for all remaining minions
 
@@ -1033,7 +1039,10 @@ class LocalClient(object):
                 break
 
             # don't spin
-            time.sleep(0.01)
+            if block:
+                time.sleep(0.01)
+            else:
+                yield
         if expect_minions:
             for minion in list((minions - found)):
                 yield {minion: {'failed': True}}
@@ -1306,14 +1315,12 @@ class LocalClient(object):
                         connected_minions = salt.utils.minions.CkMinions(self.opts).connected_ids()
                     if connected_minions and id_ not in connected_minions:
                         yield {id_: {'out': 'no_return',
-                                        'ret': 'Minion did not return. [Not connected]'}}
+                                     'ret': 'Minion did not return. [Not connected]'}}
                     else:
-                        yield({
-                            id_: {
-                                'out': 'no_return',
-                                'ret': 'Minion did not return. [No response]'
-                            }
-                        })
+                        # don't report syndics as unresponsive minions
+                        if not os.path.exists(os.path.join(self.opts['syndic_dir'], id_)):
+                            yield {id_: {'out': 'no_return',
+                                         'ret': 'Minion did not return. [No response]'}}
                 else:
                     yield {id_: min_ret}
 

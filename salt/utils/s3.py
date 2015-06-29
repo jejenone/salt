@@ -14,7 +14,11 @@ import hmac
 import logging
 
 # Import 3rd-party libs
-import requests
+try:
+    import requests
+    HAS_REQUESTS = True  # pylint: disable=W0612
+except ImportError:
+    HAS_REQUESTS = False  # pylint: disable=W0612
 from salt.ext.six.moves.urllib.parse import urlencode  # pylint: disable=no-name-in-module,import-error
 
 # Import Salt libs
@@ -29,7 +33,7 @@ log = logging.getLogger(__name__)
 def query(key, keyid, method='GET', params=None, headers=None,
           requesturl=None, return_url=False, bucket=None, service_url=None,
           path=None, return_bin=False, action=None, local_file=None,
-          verify_ssl=True):
+          verify_ssl=True, full_headers=False):
     '''
     Perform a query against an S3-like API. This function requires that a
     secret key and the id for that key are passed in. For instance:
@@ -58,6 +62,9 @@ def query(key, keyid, method='GET', params=None, headers=None,
     these will not match Amazon's S3 wildcard certificates. Certificate
     verification is enabled by default.
     '''
+    if not HAS_REQUESTS:
+        log.error('There was an error: requests is required for s3 access')
+
     if not headers:
         headers = {}
 
@@ -224,7 +231,10 @@ def query(key, keyid, method='GET', params=None, headers=None,
         if result.status_code != requests.codes.ok:
             return
         ret = {'headers': []}
-        for header in result.headers:
-            ret['headers'].append(header.strip())
+        if full_headers:
+            ret['headers'] = dict(result.headers)
+        else:
+            for header in result.headers:
+                ret['headers'].append(header.strip())
 
     return ret

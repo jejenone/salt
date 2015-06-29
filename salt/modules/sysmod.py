@@ -12,6 +12,7 @@ import logging
 import salt.loader
 import salt.utils
 import salt.state
+import salt.runner
 from salt.utils.doc import strip_rst as _strip_rst
 
 # Import 3rd-party libs
@@ -53,7 +54,7 @@ def doc(*args):
 
     Modules can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -111,7 +112,7 @@ def state_doc(*args):
 
     State names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -181,7 +182,7 @@ def runner_doc(*args):
 
     Runner names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -239,7 +240,7 @@ def returner_doc(*args):
 
     Returner names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -286,7 +287,7 @@ def renderer_doc(*args):
 
     Multiple renderers can be specified.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -312,9 +313,9 @@ def renderer_doc(*args):
 
     for module in args:
         if '*' in module:
-            for fun in fnmatch.filter(renderers_.keys(), module):  # pylint: disable=incompatible-py3-code
-                docs[fun] = renderers_[fun].__doc__                # There's no problem feeding fnmatch.filter()
-                                                                   # with a Py3's dict_keys() instance
+            for fun in fnmatch.filter(renderers_.keys(), module):   # pylint: disable=incompatible-py3-code
+                docs[fun] = renderers_[fun].__doc__                 # There's no problem feeding fnmatch.filter()
+                                                                    # with a Py3's dict_keys() instance
         else:
             for fun in six.iterkeys(renderers_):
                 docs[fun] = renderers_[fun].__doc__
@@ -336,7 +337,7 @@ def list_functions(*args, **kwargs):  # pylint: disable=unused-argument
 
     Function names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -374,7 +375,7 @@ def list_modules(*args):
     '''
     List the modules loaded on the minion
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -437,7 +438,7 @@ def argspec(module=''):
 
     Module names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -452,7 +453,7 @@ def state_argspec(module=''):
     Return the argument specification of functions in Salt state
     modules.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -478,7 +479,7 @@ def returner_argspec(module=''):
     Return the argument specification of functions in Salt returner
     modules.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -504,7 +505,7 @@ def runner_argspec(module=''):
     Return the argument specification of functions in Salt runner
     modules.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -541,7 +542,7 @@ def list_state_functions(*args, **kwargs):  # pylint: disable=unused-argument
 
     State function names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -591,7 +592,7 @@ def list_state_modules(*args):
 
     State module names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -633,7 +634,7 @@ def list_runners(*args):
 
     Runner names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -676,7 +677,7 @@ def list_runner_functions(*args, **kwargs):  # pylint: disable=unused-argument
 
     Runner function names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -725,7 +726,7 @@ def list_returners(*args):
 
     Returner names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -769,7 +770,7 @@ def list_returner_functions(*args, **kwargs):  # pylint: disable=unused-argument
 
     Returner names can be specified as globs.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     .. code-block:: bash
 
@@ -809,7 +810,7 @@ def list_renderers(*args):
     '''
     List the renderers loaded on the minion
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 

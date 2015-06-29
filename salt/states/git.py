@@ -48,6 +48,7 @@ def latest(name,
            bare=False,
            remote_name='origin',
            always_fetch=False,
+           fetch_tags=True,
            depth=None,
            identity=None,
            https_user=None,
@@ -115,8 +116,12 @@ def latest(name,
     https_user
         HTTP Basic Auth username for HTTPS (only) clones
 
+        .. versionadded:: 2015.5.0
+
     https_pass
         HTTP Basic Auth password for HTTPS (only) clones
+
+        .. versionadded:: 2015.5.0
 
     onlyif
         A command to run as a check, run the named command only if the command
@@ -195,11 +200,18 @@ def latest(name,
         log.debug(('target {0} is found, "git pull" '
                    'is probably required'.format(target)))
         try:
-            current_rev = __salt__['git.revision'](target, user=user)
+            try:
+                current_rev = __salt__['git.revision'](target, user=user)
+            except CommandExecutionError:
+                current_rev = None
 
             # handle the case where a branch was provided for rev
             remote_rev, new_rev = None, None
-            branch = __salt__['git.current_branch'](target, user=user)
+            try:
+                branch = __salt__['git.current_branch'](target, user=user)
+            except CommandExecutionError:
+                branch = None
+
             # We're only interested in the remote branch if a branch
             # (instead of a hash, for example) was provided for rev.
             if (branch != 'HEAD' and branch == rev) or rev is None:
@@ -213,7 +225,7 @@ def latest(name,
 
             # only do something, if the specified rev differs from the
             # current_rev and remote_rev
-            if current_rev in [rev, remote_rev] or remote_rev.startswith(current_rev):
+            if current_rev in [rev, remote_rev] or (remote_rev is not None and remote_rev.startswith(current_rev)):
                 new_rev = current_rev
             else:
 
@@ -229,6 +241,9 @@ def latest(name,
                     fetch_opts = remote_name
                 else:
                     fetch_opts = ''
+
+                if fetch_tags:
+                    fetch_opts += ' --tags'
 
                 # check remote if fetch_url not == name set it
                 remote = __salt__['git.remote_get'](target,
@@ -322,8 +337,12 @@ def latest(name,
                                               identity=identity,
                                               opts='--recursive')
 
-                new_rev = __salt__['git.revision'](cwd=target, user=user)
+                try:
+                    new_rev = __salt__['git.revision'](cwd=target, user=user)
+                except CommandExecutionError:
+                    new_rev = None
         except Exception as exc:
+            log.error('Unexpected exception in git state', exc_info=True)
             return _fail(
                 ret,
                 str(exc))
@@ -391,10 +410,15 @@ def latest(name,
                                           identity=identity,
                                           opts='--recursive')
 
-            new_rev = None if bare else (
-                __salt__['git.revision'](cwd=target, user=user))
+            new_rev = None
+            if not bare:
+                try:
+                    new_rev = __salt__['git.revision'](cwd=target, user=user)
+                except CommandExecutionError:
+                    pass
 
         except Exception as exc:
+            log.error('Unexpected exception in git state', exc_info=True)
             return _fail(
                 ret,
                 str(exc))

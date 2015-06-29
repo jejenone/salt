@@ -2,7 +2,7 @@
 '''
 Beacon to monitor statistics from ethernet adapters
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 '''
 
 # Import Python libs
@@ -35,47 +35,78 @@ def __virtual__():
     return __virtualname__
 
 
+def validate(config):
+    '''
+    Validate the beacon configuration
+    '''
+
+    VALID_ITEMS = [
+        'type', 'bytes_sent', 'bytes_recv', 'packets_sent',
+        'packets_recv', 'errin', 'errout', 'dropin',
+        'dropout'
+    ]
+
+    # Configuration for load beacon should be a list of dicts
+    if not isinstance(config, dict):
+        log.info('Configuration for load beacon must be a dictionary.')
+        return False
+    else:
+        for item in config:
+            if not isinstance(config[item], dict):
+                log.info('Configuration for load beacon must '
+                         'be a dictionary of dictionaries.')
+                return False
+            else:
+                if not any(j in VALID_ITEMS for j in config[item]):
+                    log.info('Invalid configuration item in '
+                             'Beacon configuration.')
+                    return False
+    return True
+
+
 def beacon(config):
     '''
     Emit the network statistics of this host.
 
-    Specify thresholds for for each network stat
+    Specify thresholds for each network stat
     and only emit a beacon if any of them are
     exceeded.
-
-    code_block:: yaml
 
     Emit beacon when any values are equal to
     configured values.
 
+    .. code-block:: yaml
+
         beacons:
-            network_info:
-                eth0:
-                    - type: equal
-                    - bytes_sent: 100000
-                    - bytes_recv: 100000
-                    - packets_sent: 100000
-                    - packets_recv: 100000
-                    - errin: 100
-                    - errout: 100
-                    - dropin: 100
-                    - dropout: 100
+          network_info:
+            eth0:
+                - type: equal
+                - bytes_sent: 100000
+                - bytes_recv: 100000
+                - packets_sent: 100000
+                - packets_recv: 100000
+                - errin: 100
+                - errout: 100
+                - dropin: 100
+                - dropout: 100
 
     Emit beacon when any values are greater
     than to configured values.
 
+    .. code-block:: yaml
+
         beacons:
-            network_info:
-                eth0:
-                    - type: greater
-                    - bytes_sent: 100000
-                    - bytes_recv: 100000
-                    - packets_sent: 100000
-                    - packets_recv: 100000
-                    - errin: 100
-                    - errout: 100
-                    - dropin: 100
-                    - dropout: 100
+          network_info:
+            eth0:
+                - type: greater
+                - bytes_sent: 100000
+                - bytes_recv: 100000
+                - packets_sent: 100000
+                - packets_recv: 100000
+                - errin: 100
+                - errout: 100
+                - dropin: 100
+                - dropout: 100
 
 
     '''

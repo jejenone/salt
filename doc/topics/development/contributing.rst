@@ -41,12 +41,12 @@ Fork a Repo Guide_>`_ and is well worth reading.
         isolated into separate branches.
 
     If you're working on a fix, create your branch from the oldest release
-    branch having the bug.  See :ref:`Which Salt Branch`.
+    branch having the bug.  See :ref:`Which Salt Branch?`.
 
     .. code-block:: bash
 
         git fetch upstream
-        git checkout -b fix-broken-thing upstream/2014.7
+        git checkout -b fix-broken-thing upstream/2015.5
 
     If you're working on a feature, create your branch from the develop branch.
 
@@ -70,7 +70,7 @@ Fork a Repo Guide_>`_ and is well worth reading.
     .. note::
 
         If your change fixes a bug or implements a feature already filed in the
-        `issue tracker<GitHub issue tracker_>`_, be sure to reference the issue
+        `issue tracker <GitHub issue tracker>`_, be sure to reference the issue
         number in the commit message body.
 
     .. code-block:: bash
@@ -87,8 +87,8 @@ Fork a Repo Guide_>`_ and is well worth reading.
         #       modified:   path/to/file2
 
 
-    If you get stuck `there are many introductory Git resources on
-    help.github.com <Git resources>`_.
+    If you get stuck, there are many introductory Git resources on
+    http://help.github.com.
 
 #.  Push your locally-committed changes to your GitHub fork,
 
@@ -99,14 +99,16 @@ Fork a Repo Guide_>`_ and is well worth reading.
 
     .. code-block:: bash
 
-        git rebase upstream/2014.7
+        git fetch upstream
+        git rebase upstream/2015.5 fix-broken-thing
         git push --set-upstream origin fix-broken-thing
 
     or,
 
     .. code-block:: bash
 
-        git rebase upstream/develop
+        git fetch upstream
+        git rebase upstream/develop add-cool-feature
         git push --set-upstream origin add-cool-feature
 
 #.  Find the branch on your GitHub salt fork.
@@ -120,9 +122,9 @@ Fork a Repo Guide_>`_ and is well worth reading.
     https://github.com/my-account/salt/pull/new/fix-broken-thing
 
     #.  If your branch is a fix for a release branch, choose that as the base
-        branch (e.g. ``2014.7`` or ``2015.2``),
+        branch (e.g. ``2015.5``),
 
-        https://github.com/my-account/salt/compare/saltstack:2014.7...fix-broken-thing
+        https://github.com/my-account/salt/compare/saltstack:2015.5...fix-broken-thing
 
         If your branch is a feature, choose ``develop`` as the base branch,
 
@@ -156,13 +158,15 @@ Fork a Repo Guide_>`_ and is well worth reading.
 Which Salt branch?
 ==================
 
-GitHub will open pull requests against Salt's main branch named ``develop`` by
-default. Most contributors can keep the default options. This section is for
-advanced contributors.
+GitHub will open pull requests against Salt's main branch, ``develop``, by
+default.  Ideally features should go into ``develop`` and bug fixes should go
+into the oldest supported release branch affected by the bug.  See
+:ref:`Sending a GitHub pull request`.
 
-Each pull request should address a single concern, as mentioned in the section
-above. For example, "Fix bug X," or "Add feature Y." And a pull request should
-be opened against the branch that corresponds to that concern.
+If you have a bug fix and have already forked your working branch from
+``develop`` and do not know how to rebase your commits against another branch,
+then submit it to ``develop`` anyway and we'll be sure to backport it to the
+correct place.
 
 The current release branch
 --------------------------
@@ -170,7 +174,7 @@ The current release branch
 The current release branch is the most recent stable release. Pull requests
 containing bug fixes should be made against the release branch.
 
-The branch name will be a date-based name such as ``2014.7``.
+The branch name will be a date-based name such as ``2015.5``.
 
 Bug fixes are made on this branch so that minor releases can be cut from this
 branch without introducing surprises and new features. This approach maximizes
@@ -335,7 +339,7 @@ And ``upstream`` is the name of the remote pointing to the main Salt repo.
 
         git rebase --onto <release-branch> <orig-base> bp-1234
 
-    Note, release branches prior to ``2014.7`` will not be able to make use of
+    Note, release branches prior to ``2015.5`` will not be able to make use of
     rebase and must use cherry-picking instead.
 
 5.  Push the back-port branch to GitHub and open a new pull request.
@@ -347,10 +351,17 @@ And ``upstream`` is the name of the remote pointing to the main Salt repo.
 
         git push -u origin bp-1234
 
+Issue and Pull Request Labeling System
+======================================
+
+SaltStack uses several labeling schemes to help facilitate code contributions
+and bug resolution. See the :doc:`<labels-and-milestones>` documentation for
+more information.
+
 .. _`saltstack/salt`: https://github.com/saltstack/salt
 .. _`GitHub Fork a Repo Guide`: https://help.github.com/articles/fork-a-repo
 .. _`GitHub issue tracker`: https://github.com/saltstack/salt/issues
 .. _`Fork saltstack/salt`: https://github.com/saltstack/salt/fork
-.. _`Git resources`: https://help.github.com/articles/what-are-other-good-resources-for-learning-git-and-github
+.. _'Git resources`: https://help.github.com/articles/good-resources-for-learning-git-and-github/
 .. _`Closing issues via commit message`: https://help.github.com/articles/closing-issues-via-commit-messages
 .. _`git format-patch`: https://www.kernel.org/pub/software/scm/git/docs/git-format-patch.html

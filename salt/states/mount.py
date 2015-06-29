@@ -217,6 +217,10 @@ def mounted(name,
                     'auto',
                     'users',
                     'bind',
+                    'nonempty',
+                    'transform_symlinks',
+                    'port',
+                    'backup-volfile-servers',
                 ]
                 # options which are provided as key=value (e.g. password=Zohp5ohb)
                 mount_invisible_keys = [
@@ -224,6 +228,7 @@ def mounted(name,
                     'comment',
                     'password',
                     'retry',
+                    'port',
                 ]
                 # Some filesystems have options which should not force a remount.
                 mount_ignore_fs_keys = {
@@ -257,9 +262,9 @@ def mounted(name,
                             ret['comment'] = "Remount would be forced because options ({0}) changed".format(opt)
                             return ret
                         else:
-                            # nfs requires umounting and mounting if options change
+                            # Some file systems require umounting and mounting if options change
                             # add others to list that require similiar functionality
-                            if fstype in ['nfs']:
+                            if fstype in ['nfs', 'cvfs'] or fstype.startswith('fuse'):
                                 ret['changes']['umount'] = "Forced unmount and mount because " \
                                                             + "options ({0}) changed".format(opt)
                                 unmount_result = __salt__['mount.umount'](real_name)
@@ -518,7 +523,7 @@ def unmounted(name,
     name
         The path to the location where the device is to be unmounted from
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     device
         The device to be unmounted.
@@ -623,5 +628,5 @@ def mod_watch(name, user=None, **kwargs):
             ret['result'] = False
             ret['comment'] = '{0} failed to remount: {1}'.format(name, out)
     else:
-        ret['comment'] = 'Watch not supported in {1} at this time'.format(kwargs['sfun'])
+        ret['comment'] = 'Watch not supported in {0} at this time'.format(kwargs['sfun'])
     return ret

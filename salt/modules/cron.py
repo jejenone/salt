@@ -10,7 +10,6 @@ import random
 
 # Import salt libs
 import salt.utils
-import salt.ext.six as six
 from salt.ext.six.moves import range
 
 
@@ -27,10 +26,11 @@ def __virtual__():
 
 
 def _encode(string):
-    if isinstance(string, six.text_type):
-        string = string.encode('utf-8')
-    elif not string:
-        string = ''
+    try:
+        string = salt.utils.to_str(string)
+    except TypeError:
+        if not string:
+            string = ''
     return "{0}".format(string)
 
 
@@ -215,14 +215,22 @@ def raw_cron(user):
 
         salt '*' cron.raw_cron root
     '''
+
+    appUser = __opts__['user']
     if __grains__.get('os_family') in ('Solaris', 'AIX'):
-        cmd = 'crontab -l {0}'.format(user)
+        if appUser == user:
+            cmd = 'crontab -l'
+        else:
+            cmd = 'crontab -l {0}'.format(user)
         lines = __salt__['cmd.run_stdout'](cmd,
                                            runas=user,
                                            rstrip=False,
                                            python_shell=False).splitlines()
     else:
-        cmd = 'crontab -l -u {0}'.format(user)
+        if appUser == user:
+            cmd = 'crontab -l'
+        else:
+            cmd = 'crontab -l -u {0}'.format(user)
         lines = __salt__['cmd.run_stdout'](cmd,
                                            rstrip=False,
                                            python_shell=False).splitlines()

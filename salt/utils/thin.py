@@ -16,6 +16,7 @@ import tempfile
 import jinja2
 import yaml
 import salt.ext.six as six
+import tornado
 
 # pylint: disable=import-error,no-name-in-module
 try:
@@ -30,6 +31,12 @@ try:
 except ImportError:
     # Older jinja does not need markupsafe
     HAS_MARKUPSAFE = False
+
+try:
+    import xml
+    HAS_XML = True
+except ImportError:
+    HAS_XML = False
 # pylint: enable=import-error,no-name-in-module
 
 try:
@@ -86,18 +93,26 @@ def gen_thin(cachedir, extra_mods='', overwrite=False, so_mods=''):
     with salt.utils.fopen(salt_call, 'w+') as fp_:
         fp_.write(SALTCALL)
     if os.path.isfile(thintar):
-        with salt.utils.fopen(thinver) as fh_:
-            if overwrite or not os.path.isfile(thinver):
-                try:
-                    os.remove(thintar)
-                except OSError:
-                    pass
-            elif fh_.read() == salt.version.__version__:
-                return thintar
+        if not overwrite:
+            if os.path.isfile(thinver):
+                with salt.utils.fopen(thinver) as fh_:
+                    overwrite = fh_.read() != salt.version.__version__
+            else:
+                overwrite = True
+
+        if overwrite:
+            try:
+                os.remove(thintar)
+            except OSError:
+                pass
+        else:
+            return thintar
+
     tops = [
             os.path.dirname(salt.__file__),
             os.path.dirname(jinja2.__file__),
             os.path.dirname(yaml.__file__),
+            os.path.dirname(tornado.__file__),
             ]
 
     tops.append(six.__file__.replace('.pyc', '.py'))
@@ -107,6 +122,10 @@ def gen_thin(cachedir, extra_mods='', overwrite=False, so_mods=''):
 
     if HAS_SSL_MATCH_HOSTNAME:
         tops.append(os.path.dirname(os.path.dirname(ssl_match_hostname.__file__)))
+
+    if HAS_XML:
+        # For openSUSE, which apparently doesn't include the whole stdlib
+        tops.append(os.path.dirname(xml.__file__))
 
     for mod in [m for m in extra_mods.split(',') if m]:
         if mod not in locals() and mod not in globals():
@@ -152,7 +171,7 @@ def gen_thin(cachedir, extra_mods='', overwrite=False, so_mods=''):
             # top is a single file module
             tfp.add(base)
             continue
-        for root, dirs, files in os.walk(base):
+        for root, dirs, files in os.walk(base, followlinks=True):
             for name in files:
                 if not name.endswith(('.pyc', '.pyo')):
                     tfp.add(os.path.join(root, name))

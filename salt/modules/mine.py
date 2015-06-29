@@ -8,6 +8,7 @@ from __future__ import absolute_import
 import copy
 import logging
 import time
+import traceback
 
 # Import salt libs
 import salt.crypt
@@ -124,8 +125,10 @@ def update(clear=False):
                     continue
                 data[func] = __salt__[func]()
         except Exception:
+            trace = traceback.format_exc()
             log.error('Function {0} in mine_functions failed to execute'
                       .format(func))
+            log.debug('Error: {0}'.format(trace))
             continue
     if __opts__['file_client'] == 'local':
         if not clear:
@@ -209,6 +212,7 @@ def get(tgt, fun, expr_form='glob'):
         grain_pcre
         compound
         pillar
+        pillar_pcre
 
     Note that all pillar matches, whether using the compound matching system or
     the pillar matching system, will be exact matches, with globbing disabled.
@@ -231,6 +235,7 @@ def get(tgt, fun, expr_form='glob'):
                      'ipcidr': __salt__['match.ipcidr'],
                      'compound': __salt__['match.compound'],
                      'pillar': __salt__['match.pillar'],
+                     'pillar_pcre': __salt__['match.pillar_pcre'],
                      }[expr_form](tgt)
         if is_target:
             data = __salt__['data.getval']('mine_cache')
@@ -318,26 +323,27 @@ def get_docker(interfaces=None, cidrs=None):
         cidrs = cidr_
 
     # Get docker info
-    cmd = 'docker.get_containers'
+    cmd = 'dockerng.ps'
     docker_hosts = get('*', cmd)
 
     proxy_lists = {}
 
     # Process docker info
     for containers in six.itervalues(docker_hosts):
+        host = containers.pop('host')
         host_ips = []
 
         # Prepare host_ips list
         if not interfaces:
-            for info in six.itervalues(containers['host']['interfaces']):
+            for info in six.itervalues(host['interfaces']):
                 if 'inet' in info:
                     for ip_ in info['inet']:
                         host_ips.append(ip_['address'])
         else:
             for interface in interfaces:
-                if interface in containers['host']['interfaces']:
-                    if 'inet' in containers['host']['interfaces'][interface]:
-                        for item in containers['host']['interfaces'][interface]['inet']:
+                if interface in host['interfaces']:
+                    if 'inet' in host['interfaces'][interface]:
+                        for item in host['interfaces'][interface]['inet']:
                             host_ips.append(item['address'])
         host_ips = list(set(host_ips))
 
@@ -351,19 +357,21 @@ def get_docker(interfaces=None, cidrs=None):
             host_ips = list(set(good_ips))
 
         # Process each container
-        if containers['out']:
-            for container in containers['out']:
-                if container['Image'] not in proxy_lists:
-                    proxy_lists[container['Image']] = {}
-                for dock_port in container['Ports']:
-                    # If port is 0.0.0.0, then we must get the docker host IP
-                    if dock_port['IP'] == '0.0.0.0':
-                        for ip_ in host_ips:
-                            proxy_lists[container['Image']].setdefault('ipv4', {}).setdefault(dock_port['PrivatePort'], []).append(
-                                '{0}:{1}'.format(ip_, dock_port['PublicPort']))
-                            proxy_lists[container['Image']]['ipv4'][dock_port['PrivatePort']] = list(set(proxy_lists[container['Image']]['ipv4'][dock_port['PrivatePort']]))
-                    elif dock_port['IP']:
+        for container in six.itervalues(containers):
+            if container['Image'] not in proxy_lists:
+                proxy_lists[container['Image']] = {}
+            for dock_port in container['Ports']:
+                # IP exists only if port is exposed
+                ip_address = dock_port.get('IP')
+                # If port is 0.0.0.0, then we must get the docker host IP
+                if ip_address == '0.0.0.0':
+                    for ip_ in host_ips:
                         proxy_lists[container['Image']].setdefault('ipv4', {}).setdefault(dock_port['PrivatePort'], []).append(
-                            '{0}:{1}'.format(dock_port['IP'], dock_port['PublicPort']))
+                            '{0}:{1}'.format(ip_, dock_port['PublicPort']))
                         proxy_lists[container['Image']]['ipv4'][dock_port['PrivatePort']] = list(set(proxy_lists[container['Image']]['ipv4'][dock_port['PrivatePort']]))
+                elif ip_address:
+                    proxy_lists[container['Image']].setdefault('ipv4', {}).setdefault(dock_port['PrivatePort'], []).append(
+                        '{0}:{1}'.format(dock_port['IP'], dock_port['PublicPort']))
+                    proxy_lists[container['Image']]['ipv4'][dock_port['PrivatePort']] = list(set(proxy_lists[container['Image']]['ipv4'][dock_port['PrivatePort']]))
+
     return proxy_lists

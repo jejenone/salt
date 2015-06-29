@@ -28,14 +28,16 @@ This has also been tested to work with pipes, if needed:
     script_args: | head
 
 
-Use SFTP to transfer files
-==========================
-Some distributions do not have scp distributed with the ssh package.  The
-solution is to use sftp with the `use_sftp` flag
+Selecting the File Transport
+============================
+By default, Salt Cloud uses SFTP to transfer files to Linux hosts. However, if
+SFTP is not available, or specific SCP functionality is needed, Salt Cloud can
+be configured to use SCP instead.
 
 .. code-block:: yaml
 
-    use_sftp: True
+    file_transport: sftp
+    file_transport: scp
 
 
 Sync After Install
@@ -296,7 +298,7 @@ only the EC2 driver supports this functionality.
 SSH Agent
 =========
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 
 If the ssh key is not stored on the server salt-cloud is being run on, set
 ssh_agent, and salt-cloud will use the forwarded ssh-agent to authenticate.
@@ -304,3 +306,29 @@ ssh_agent, and salt-cloud will use the forwarded ssh-agent to authenticate.
 .. code-block:: yaml
 
     ssh_agent: True
+
+File Map Upload
+===============
+
+.. versionadded:: 2014.7.0
+
+The ``file_map`` option allows an arbitrary group of files to be uploaded to the
+target system before running the deploy script. This functionality requires a
+provider uses salt.utils.cloud.bootstrap(), which is currently limited to the ec2,
+gce, openstack and nova drivers.
+
+The ``file_map`` can be configured globally in ``/etc/salt/cloud``, or in any cloud
+provider or profile file. For example, to upload an extra package or a custom deploy
+script, a cloud profile using ``file_map`` might look like:
+
+.. code-block:: yaml
+
+    ubuntu14:
+      provider: ec2-config
+      image: ami-98aa1cf0
+      size: t1.micro
+      ssh_username: root
+      securitygroup: default
+      file_map:
+        /local/path/to/custom/script: /remote/path/to/use/custom/script
+        /local/path/to/package: /remote/path/to/store/package

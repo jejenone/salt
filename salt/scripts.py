@@ -67,7 +67,9 @@ def minion_process(queue):
                 # check pid alive (Unix only trick!)
                 os.kill(parent_pid, 0)
             except OSError:
-                sys.exit(999)
+                # forcibly exit, regular sys.exit raises an exception-- which
+                # isn't sufficient in a thread
+                os._exit(999)
     if not salt.utils.is_windows():
         thread = threading.Thread(target=suicide_when_without_parent, args=(os.getppid(),))
         thread.start()
@@ -353,3 +355,14 @@ def salt_main():
             SystemExit('\nExiting gracefully on Ctrl-c'),
             err,
             hardcrash, trace=trace)
+
+
+def salt_spm():
+    '''
+    The main function for spm, the Salt Package Manager
+
+    .. versionadded:: Beryllium
+    '''
+    import salt.cli.spm
+    spm = salt.cli.spm.SPM()  # pylint: disable=E1120
+    spm.run()

@@ -153,10 +153,15 @@ This state creates a private key then requests a certificate signed by ca accord
 from __future__ import absolute_import
 import datetime
 import os
+import re
+import copy
 
 # Import Salt Libs
 import salt.exceptions
 import salt.utils
+
+# Import 3rd-party libs
+import salt.ext.six as six
 
 
 def _revoked_to_list(revs):
@@ -167,10 +172,10 @@ def _revoked_to_list(revs):
     list_ = []
 
     for rev in revs:
-        for rev_name, props in rev.iteritems():             # pylint: disable=unused-variable
+        for rev_name, props in six.iteritems(rev):             # pylint: disable=unused-variable
             dict_ = {}
             for prop in props:
-                for propname, val in prop.iteritems():
+                for propname, val in six.iteritems(prop):
                     if isinstance(val, datetime.datetime):
                         val = val.strftime('%Y-%m-%d %H:%M:%S')
                     dict_[propname] = val
@@ -377,9 +382,16 @@ def certificate_managed(name,
     if os.path.isfile(name):
         try:
             current = __salt__['x509.read_certificate'](certificate=name)
-            current_comp = current.copy()
+            current_comp = copy.deepcopy(current)
             if 'serial_number' not in kwargs:
                 current_comp.pop('Serial Number')
+                if 'signing_cert' not in kwargs:
+                    try:
+                        current_comp['X509v3 Extensions']['authorityKeyIdentifier'] = (
+                            re.sub(r'serial:([0-9A-F]{2}:)*[0-9A-F]{2}', 'serial:--',
+                                current_comp['X509v3 Extensions']['authorityKeyIdentifier']))
+                    except KeyError:
+                        pass
             current_comp.pop('Not Before')
             current_comp.pop('MD5 Finger Print')
             current_comp.pop('SHA1 Finger Print')
@@ -401,10 +413,17 @@ def certificate_managed(name,
     new = __salt__['x509.create_certificate'](testrun=True, **kwargs)
 
     if isinstance(new, dict):
-        new_comp = new.copy()
+        new_comp = copy.deepcopy(new)
         new.pop('Issuer Public Key')
         if 'serial_number' not in kwargs:
             new_comp.pop('Serial Number')
+            if 'signing_cert' not in kwargs:
+                try:
+                    new_comp['X509v3 Extensions']['authorityKeyIdentifier'] = (
+                        re.sub(r'serial:([0-9A-F]{2}:)*[0-9A-F]{2}', 'serial:--',
+                            new_comp['X509v3 Extensions']['authorityKeyIdentifier']))
+                except KeyError:
+                    pass
         new_comp.pop('Not Before')
         new_comp.pop('Not After')
         new_comp.pop('MD5 Finger Print')

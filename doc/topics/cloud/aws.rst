@@ -84,7 +84,7 @@ parameters are discussed in more detail below.
       # Optionally add an IAM profile
       iam_profile: 'arn:aws:iam::123456789012:instance-profile/ExampleInstanceProfile'
 
-      provider: ec2
+      driver: ec2
 
 
     my-ec2-southeast-private-ips:
@@ -116,6 +116,12 @@ parameters are discussed in more detail below.
       #
       private_key: /etc/salt/my_test_key.pem
       keyname: my_test_key
+
+      # This one should NOT be specified if VPC was not configured in AWS to be
+      # the default. It might cause an error message which sais that network
+      # interfaces and an instance-level security groups may not be specified
+      # on the same request.
+      #
       securitygroup: default
 
       # Optionally configure default region
@@ -138,7 +144,7 @@ parameters are discussed in more detail below.
       # Optionally add an IAM profile
       iam_profile: 'my other profile name'
 
-      provider: ec2
+      driver: ec2
 
 
 Access Credentials
@@ -334,7 +340,7 @@ The following settings are always required for EC2:
       keyname: test
       securitygroup: quick-start
       private_key: /root/test.pem
-      provider: ec2
+      driver: ec2
 
 
 Optional Settings
@@ -453,7 +459,7 @@ each cloud profile. Note that the number of instance stores varies by instance
 type.  If more mappings are provided than are supported by the instance type,
 mappings will be created in the order provided and additional mappings will be
 ignored. Consult the `AWS documentation`_ for a listing of the available
-instance stores, device names, and mount points.
+instance stores, and device names.
 
 .. code-block:: yaml
 
@@ -484,7 +490,6 @@ existing volume use the ``volume_id`` parameter.
 .. code-block:: yaml
 
     device: /dev/xvdj
-    mount_point: /mnt/my_ebs
     volume_id: vol-12345abcd
 
 Or, to create a volume from an EBS snapshot, use the ``snapshot`` parameter.
@@ -492,7 +497,6 @@ Or, to create a volume from an EBS snapshot, use the ``snapshot`` parameter.
 .. code-block:: yaml
 
     device: /dev/xvdj
-    mount_point: /mnt/my_ebs
     snapshot: snap-abcd12345
 
 Note that ``volume_id`` will take precedence over the ``snapshot`` parameter.

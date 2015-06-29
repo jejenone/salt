@@ -35,6 +35,7 @@ Full list of builtin execution modules
     boto_elasticache
     boto_elb
     boto_iam
+    boto_kms
     boto_rds
     boto_route53
     boto_secgroup
@@ -60,6 +61,7 @@ Full list of builtin execution modules
     cpan
     cron
     cyg
+    cytest
     daemontools
     darwin_pkgutil
     darwin_sysctl
@@ -271,6 +273,7 @@ Full list of builtin execution modules
     sysmod
     sysrc
     system
+    system_profiler
     systemd
     test
     test_virtual

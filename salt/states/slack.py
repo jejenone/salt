@@ -5,7 +5,7 @@ Send a message to Slack
 
 This state is useful for sending messages to Slack during state runs.
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 
 .. code-block:: yaml
 
@@ -17,6 +17,7 @@ This state is useful for sending messages to Slack during state runs.
         - api_key: peWcBiMOS9HrZG15peWcBiMOS9HrZG15
 
 The api key can be specified in the master or minion configuration like below:
+
 .. code-block:: yaml
 
     slack:
@@ -68,7 +69,6 @@ def post_message(name,
     api_key
         The api key for Slack to use for authentication,
         if not specified in the configuration options of master or minion.
-
     '''
     ret = {'name': name,
            'changes': {},

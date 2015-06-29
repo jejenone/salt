@@ -184,8 +184,12 @@ def clone(cwd, repository, opts=None, user=None, identity=None,
     https_user : None
         HTTP Basic Auth username for HTTPS (only) clones
 
+        .. versionadded:: 20515.5.0
+
     https_pass : None
         HTTP Basic Auth password for HTTPS (only) clones
+
+        .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -203,7 +207,10 @@ def clone(cwd, repository, opts=None, user=None, identity=None,
 
     if not opts:
         opts = ''
-    cmd = 'git clone {0} {1!r} {2}'.format(repository, cwd, opts)
+    if utils.is_windows():
+        cmd = 'git clone {0} {1} {2}'.format(repository, cwd, opts)
+    else:
+        cmd = 'git clone {0} {1!r} {2}'.format(repository, cwd, opts)
 
     return _git_run(cmd, runas=user, identity=identity)
 
@@ -743,8 +750,12 @@ def remote_set(cwd, name='origin', url=None, user=None, https_user=None,
     https_user : None
         HTTP Basic Auth username for HTTPS (only) clones
 
+        .. versionadded:: 2015.5.0
+
     https_pass : None
         HTTP Basic Auth password for HTTPS (only) clones
+
+        .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -940,8 +951,12 @@ def ls_remote(cwd, repository="origin", branch="master", user=None,
     https_user : None
         HTTP Basic Auth username for HTTPS (only) clones
 
+        .. versionadded:: 2015.5.0
+
     https_pass : None
         HTTP Basic Auth password for HTTPS (only) clones
+
+        .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -952,5 +967,5 @@ def ls_remote(cwd, repository="origin", branch="master", user=None,
     '''
     _check_git()
     repository = _add_http_basic_auth(repository, https_user, https_pass)
-    cmd = "git ls-remote -h " + repository + " " + branch + " | cut -f 1"
+    cmd = ' '.join(["git", "ls-remote", "-h", str(repository), str(branch), "| cut -f 1"])
     return _git_run(cmd, cwd=cwd, runas=user, identity=identity)

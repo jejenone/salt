@@ -84,7 +84,8 @@ class ClientFuncsDict(collections.MutableMapping):
             async_pub = self.client._gen_async_pub(pub_data.get('__pub_jid'))
 
             user = salt.utils.get_specific_user()
-            return self.client._proc_function(key,
+            return self.client._proc_function(
+                   key,
                    low,
                    user,
                    async_pub['tag'],  # TODO: fix
@@ -150,7 +151,7 @@ class SyncClientMixin(object):
         ret_tag = salt.utils.event.tagify('ret', base=job['tag'])
 
         if timeout is None:
-            timeout = 300
+            timeout = self.opts.get('rest_timeout', 300)
         ret = event.get_event(tag=ret_tag, full=True, wait=timeout)
         if ret is None:
             raise salt.exceptions.SaltClientTimeout(
@@ -285,6 +286,8 @@ class SyncClientMixin(object):
             # namespace only once per module-- not per func
             completed_funcs = []
             for mod_name in six.iterkeys(self.functions):
+                if '.' not in mod_name:
+                    continue
                 mod, _ = mod_name.split('.', 1)
                 if mod in completed_funcs:
                     continue

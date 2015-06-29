@@ -171,6 +171,9 @@ def latest_version(*names, **kwargs):
                 ret_data[k] = pkg_info.get(k)
             ret[name] = ret_data
 
+    # Return a string if only one package name passed
+    if len(names) == 1:
+        return ret[names[0]]['version']
     return ret
 
 
@@ -345,7 +348,7 @@ def mod_repo(repo, **kwargs):
     repo or alias
         alias by which the zypper refers to the repo
 
-    url or mirrorlist
+    url, mirrorlist or baseurl
         the URL for zypper to reference
 
     enabled
@@ -381,7 +384,7 @@ def mod_repo(repo, **kwargs):
 
     # An attempt to add new one?
     if repo not in repos_cfg.sections():
-        url = kwargs.get('url', kwargs.get('mirrorlist'))
+        url = kwargs.get('url', kwargs.get('mirrorlist', kwargs.get('baseurl')))
         if not url:
             raise CommandExecutionError(
                 'Repository \'{0}\' not found and no URL passed to create one.'.format(repo))
@@ -967,7 +970,7 @@ def modified(*packages, **flags):
     List the modified files that belong to a package. Not specifying any packages
     will return a list of _all_ modified files on the system's RPM database.
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     Filtering by flags (True or False):
 

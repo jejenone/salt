@@ -23,6 +23,7 @@ import salt.transport
 import salt.fileserver
 import salt.utils
 import salt.utils.templates
+import salt.utils.url
 import salt.utils.gzip_util
 import salt.utils.http
 from salt.utils.openstack.swift import SaltSwift
@@ -64,8 +65,9 @@ class Client(object):
         Make sure that this path is intended for the salt master and trim it
         '''
         if not path.startswith('salt://'):
-            raise MinionError('Unsupported path: {0}'.format(path))
-        return path[7:]
+            raise MinionError(u'Unsupported path: {0}'.format(path))
+        file_path, saltenv = salt.utils.url.parse(path)
+        return file_path
 
     def _file_local_list(self, dest):
         '''
@@ -189,7 +191,7 @@ class Client(object):
 
         ret = []
         for path in self.file_list(saltenv):
-            ret.append(self.cache_file('salt://{0}'.format(path), saltenv))
+            ret.append(self.cache_file(salt.utils.url.create(path), saltenv))
         return ret
 
     def cache_dir(self, path, saltenv='base', include_empty=False,
@@ -227,7 +229,7 @@ class Client(object):
             if fn_.strip() and fn_.startswith(path):
                 if salt.utils.check_include_exclude(
                         fn_, include_pat, exclude_pat):
-                    fn_ = self.cache_file('salt://' + fn_, saltenv)
+                    fn_ = self.cache_file(salt.utils.url.create(fn_), saltenv)
                     if fn_:
                         ret.append(fn_)
 
@@ -352,15 +354,23 @@ class Client(object):
             # Backwards compatibility
             saltenv = env
 
+        if path.startswith('salt://'):
+            path, senv = salt.utils.url.parse(path)
+            if senv:
+                saltenv = senv
+
+        escaped = True if salt.utils.url.is_escaped(path) else False
+
+        # also strip escape character '|'
         localsfilesdest = os.path.join(
-            self.opts['cachedir'], 'localfiles', path.lstrip('/'))
+            self.opts['cachedir'], 'localfiles', path.lstrip('|/'))
         filesdest = os.path.join(
-            self.opts['cachedir'], 'files', saltenv, path.lstrip('salt://'))
+            self.opts['cachedir'], 'files', saltenv, path.lstrip('|'))
 
         if os.path.exists(filesdest):
-            return filesdest
+            return salt.utils.url.escape(filesdest) if escaped else filesdest
         elif os.path.exists(localsfilesdest):
-            return localsfilesdest
+            return salt.utils.url.escape(localsfilesdest) if escaped else localsfilesdest
 
         return ''
 
@@ -419,12 +429,13 @@ class Client(object):
     def get_state(self, sls, saltenv):
         '''
         Get a state file from the master and store it in the local minion
-        cache return the location of the file
+        cache; return the location of the file
         '''
         if '.' in sls:
             sls = sls.replace('.', '/')
-        for path in ['salt://{0}.sls'.format(sls),
-                     '/'.join(['salt:/', sls, 'init.sls'])]:
+        sls_url = salt.utils.url.create(sls + '.sls')
+        init_url = salt.utils.url.create(sls + '/init.sls')
+        for path in [sls_url, init_url]:
             dest = self.cache_file(path, saltenv)
             if dest:
                 return {'source': path, 'dest': dest}
@@ -457,10 +468,29 @@ class Client(object):
             prefix = separated[0]
 
         # Copy files from master
-        for fn_ in self.file_list(saltenv):
-            if fn_.startswith(path):
-                # Prevent files in "salt://foobar/" (or salt://foo.sh) from
-                # matching a path of "salt://foo"
+        for fn_ in self.file_list(saltenv, prefix=path):
+            # Prevent files in "salt://foobar/" (or salt://foo.sh) from
+            # matching a path of "salt://foo"
+            try:
+                if fn_[len(path)] != '/':
+                    continue
+            except IndexError:
+                continue
+            # Remove the leading directories from path to derive
+            # the relative path on the minion.
+            minion_relpath = fn_[len(prefix):].lstrip('/')
+            ret.append(
+               self.get_file(
+                  salt.utils.url.create(fn_),
+                  '{0}/{1}'.format(dest, minion_relpath),
+                  True, saltenv, gzip
+               )
+            )
+        # Replicate empty dirs from master
+        try:
+            for fn_ in self.file_list_emptydirs(saltenv, prefix=path):
+                # Prevent an empty dir "salt://foobar/" from matching a path of
+                # "salt://foo"
                 try:
                     if fn_[len(path)] != '/':
                         continue
@@ -469,31 +499,10 @@ class Client(object):
                 # Remove the leading directories from path to derive
                 # the relative path on the minion.
                 minion_relpath = fn_[len(prefix):].lstrip('/')
-                ret.append(
-                    self.get_file(
-                        'salt://{0}'.format(fn_),
-                        '{0}/{1}'.format(dest, minion_relpath),
-                        True, saltenv, gzip
-                    )
-                )
-        # Replicate empty dirs from master
-        try:
-            for fn_ in self.file_list_emptydirs(saltenv):
-                if fn_.startswith(path):
-                    # Prevent an empty dir "salt://foobar/" from matching a path of
-                    # "salt://foo"
-                    try:
-                        if fn_[len(path)] != '/':
-                            continue
-                    except IndexError:
-                        continue
-                    # Remove the leading directories from path to derive
-                    # the relative path on the minion.
-                    minion_relpath = fn_[len(prefix):].lstrip('/')
-                    minion_mkdir = '{0}/{1}'.format(dest, minion_relpath)
-                    if not os.path.isdir(minion_mkdir):
-                        os.makedirs(minion_mkdir)
-                    ret.append(minion_mkdir)
+                minion_mkdir = '{0}/{1}'.format(dest, minion_relpath)
+                if not os.path.isdir(minion_mkdir):
+                    os.makedirs(minion_mkdir)
+                ret.append(minion_mkdir)
         except TypeError:
             pass
         ret.sort()
@@ -597,6 +606,8 @@ class Client(object):
                 password=url_data.password,
                 **get_kwargs
             )
+            if 'handle' not in query:
+                raise MinionError('Error: {0}'.format(query['error']))
             response = query['handle']
             chunk_size = 32 * 1024
             if not no_cache:
@@ -606,7 +617,7 @@ class Client(object):
                             destfp.write(chunk)
                     else:
                         while True:
-                            chunk = response.read(chunk_size)
+                            chunk = response.buffer.read(chunk_size)
                             destfp.write(chunk)
                             if len(chunk) < chunk_size:
                                 break
@@ -707,9 +718,9 @@ class LocalClient(Client):
 
         if saltenv not in self.opts['file_roots']:
             return fnd
-        if path.startswith('|'):
+        if salt.utils.url.is_escaped(path):
             # The path arguments are escaped
-            path = path[1:]
+            path = salt.utils.url.unescape(path)
         for root in self.opts['file_roots'][saltenv]:
             full = os.path.join(root, path)
             if os.path.isfile(full):
@@ -928,6 +939,13 @@ class RemoteClient(Client):
         else:
             self.auth = ''
 
+    def _refresh_channel(self):
+        '''
+        Reset the channel, in the event of an interruption
+        '''
+        self.channel = salt.transport.Channel.factory(self.opts)
+        return self.channel
+
     def get_file(self,
                  path,
                  dest='',
@@ -941,6 +959,22 @@ class RemoteClient(Client):
         dest is omitted, then the downloaded file will be placed in the minion
         cache
         '''
+
+        path, senv = salt.utils.url.split_env(path)
+        if senv:
+            saltenv = senv
+
+        # Check if file exists on server, before creating files and
+        # directories
+        hash_server = self.hash_file(path, saltenv)
+        if hash_server == '':
+            log.debug(
+                'Could not find file from saltenv {0!r}, {1!r}'.format(
+                    saltenv, path
+                )
+            )
+            return False
+
         if env is not None:
             salt.utils.warn_until(
                 'Boron',
@@ -973,7 +1007,6 @@ class RemoteClient(Client):
 
         if dest2check and os.path.isfile(dest2check):
             hash_local = self.hash_file(dest2check, saltenv)
-            hash_server = self.hash_file(path, saltenv)
             if hash_local == hash_server:
                 log.info(
                     'Fetching file from saltenv {0!r}, ** skipped ** '
@@ -989,6 +1022,7 @@ class RemoteClient(Client):
             )
         )
         d_tries = 0
+        transport_tries = 0
         path = self._check_proto(path)
         load = {'path': path,
                 'saltenv': saltenv,
@@ -1015,38 +1049,47 @@ class RemoteClient(Client):
             else:
                 load['loc'] = fn_.tell()
             data = self.channel.send(load)
-            if 'data' not in data:
-                log.error('Data is {0}'.format(data))
-            if not data['data']:
-                if not fn_ and data['dest']:
-                    # This is a 0 byte file on the master
+            try:
+                if not data['data']:
+                    if not fn_ and data['dest']:
+                        # This is a 0 byte file on the master
+                        with self._cache_loc(data['dest'], saltenv) as cache_dest:
+                            dest = cache_dest
+                            with salt.utils.fopen(cache_dest, 'wb+') as ofile:
+                                ofile.write(data['data'])
+                    if 'hsum' in data and d_tries < 3:
+                        # Master has prompted a file verification, if the
+                        # verification fails, re-download the file. Try 3 times
+                        d_tries += 1
+                        hsum = salt.utils.get_hash(dest, data.get('hash_type', 'md5'))
+                        if hsum != data['hsum']:
+                            log.warn('Bad download of file {0}, attempt {1} '
+                                     'of 3'.format(path, d_tries))
+                            continue
+                    break
+                if not fn_:
                     with self._cache_loc(data['dest'], saltenv) as cache_dest:
                         dest = cache_dest
-                        with salt.utils.fopen(cache_dest, 'wb+') as ofile:
-                            ofile.write(data['data'])
-                if 'hsum' in data and d_tries < 3:
-                    # Master has prompted a file verification, if the
-                    # verification fails, re-download the file. Try 3 times
-                    d_tries += 1
-                    hsum = salt.utils.get_hash(dest, data.get('hash_type', 'md5'))
-                    if hsum != data['hsum']:
-                        log.warn('Bad download of file {0}, attempt {1} '
-                                 'of 3'.format(path, d_tries))
-                        continue
-                break
-            if not fn_:
-                with self._cache_loc(data['dest'], saltenv) as cache_dest:
-                    dest = cache_dest
-                    # If a directory was formerly cached at this path, then
-                    # remove it to avoid a traceback trying to write the file
-                    if os.path.isdir(dest):
-                        salt.utils.rm_rf(dest)
-                    fn_ = salt.utils.fopen(dest, 'wb+')
-            if data.get('gzip', None):
-                data = salt.utils.gzip_util.uncompress(data['data'])
-            else:
-                data = data['data']
-            fn_.write(data)
+                        # If a directory was formerly cached at this path, then
+                        # remove it to avoid a traceback trying to write the file
+                        if os.path.isdir(dest):
+                            salt.utils.rm_rf(dest)
+                        fn_ = salt.utils.fopen(dest, 'wb+')
+                if data.get('gzip', None):
+                    data = salt.utils.gzip_util.uncompress(data['data'])
+                else:
+                    data = data['data']
+                fn_.write(data)
+            except (TypeError, KeyError) as e:
+                transport_tries += 1
+                log.error('Data transport is broken, got: {0}, type: {1}, '
+                          'exception: {2}, attempt {3} of 3'.format(
+                              data, type(data), e, transport_tries)
+                          )
+                self._refresh_channel()
+                if transport_tries > 3:
+                    break
+
         if fn_:
             fn_.close()
             log.info(
@@ -1056,7 +1099,7 @@ class RemoteClient(Client):
             )
         else:
             log.debug(
-                'In env {0!r}, we are ** missing ** the file {1!r}'.format(
+                'In saltenv {0!r}, we are ** missing ** the file {1!r}'.format(
                     saltenv, path
                 )
             )

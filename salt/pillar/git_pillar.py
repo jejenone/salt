@@ -2,6 +2,8 @@
 '''
 Clone a remote git repository and use the filesystem as a Pillar source
 
+Currently GitPython is the only supported provider for git Pillars
+
 This external Pillar source can be configured in the master config file like
 so:
 
@@ -16,7 +18,7 @@ to look for Pillar files (such as ``top.sls``).
 .. versionchanged:: 2014.7.0
     The optional ``root`` parameter will be added.
 
-.. versionchanged:: 2015.2.0
+.. versionchanged:: 2015.5.0
     The special branch name '__env__' will be replace by the
     environment ({{env}})
 
@@ -65,9 +67,9 @@ the ``ext_pillar:`` configuration would be like:
 .. code-block:: yaml
 
     ext_pillar:
-      - git: _ git://gitserver/git-pillar.git root=pillar
+      - git: __env__ git://gitserver/git-pillar.git root=pillar
 
-The (optinal) root=pillar defines the directory that contains the pillar data.
+The (optional) root=pillar defines the directory that contains the pillar data.
 The corresponding ``top.sls`` would be like:
 
 .. code-block:: yaml
@@ -177,9 +179,9 @@ class GitPillar(object):
     def map_branch(self, branch, opts=None):
         opts = __opts__ if opts is None else opts
         if branch == '__env__':
-            branch = opts.get('environment', 'base')
+            branch = opts.get('environment') or 'base'
             if branch == 'base':
-                branch = opts.get('gitfs_base', 'master')
+                branch = opts.get('gitfs_base') or 'master'
         return branch
 
     def update(self):
@@ -311,8 +313,6 @@ def ext_pillar(minion_id,
     # function
     if __opts__['pillar_roots'].get(branch, []) == [pillar_dir]:
         return {}
-
-    gitpil.update()
 
     opts = deepcopy(__opts__)
 

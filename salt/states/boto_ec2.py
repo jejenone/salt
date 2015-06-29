@@ -3,6 +3,7 @@
 Manage EC2
 
 .. versionadded:: Beryllium
+
 This module provides an interface to the Elastic Compute Cloud (EC2) service
 from AWS.
 
@@ -11,7 +12,7 @@ The below code creates a key pair:
 .. code-block:: yaml
 
     create-key-pair:
-      boto_ec2.present:
+      boto_ec2.key_present:
         - name: mykeypair
         - save_private: /root/
         - region: eu-west-1
@@ -21,7 +22,7 @@ The below code creates a key pair:
 .. code-block:: yaml
 
     import-key-pair:
-       boto_ec2.present:
+       boto_ec2.key_present:
         - name: mykeypair
         - upload_public: 'ssh-rsa AAAA'
         - keyid: GKTADJGHEIQSXMKKRBJ08H
@@ -32,7 +33,7 @@ You can also use salt:// in order to define the public key.
 .. code-block:: yaml
 
     import-key-pair:
-       boto_ec2.present:
+       boto_ec2.key_present:
         - name: mykeypair
         - upload_public: salt://mybase/public_key.pub
         - keyid: GKTADJGHEIQSXMKKRBJ08H
@@ -43,7 +44,7 @@ The below code deletes a key pair:
 .. code-block:: yaml
 
     delete-key-pair:
-      boto_ec2.absent:
+      boto_ec2.key_absent:
         - name: mykeypair
         - region: eu-west-1
         - keyid: GKTADJGHEIQSXMKKRBJ08H

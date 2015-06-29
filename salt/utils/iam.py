@@ -10,10 +10,14 @@ from __future__ import absolute_import
 import json
 import logging
 import time
-import requests
 import pprint
 from salt.ext.six.moves import range
 import salt.ext.six as six
+try:
+    import requests
+    HAS_REQUESTS = True  # pylint: disable=W0612
+except ImportError:
+    HAS_REQUESTS = False  # pylint: disable=W0612
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +29,7 @@ def _retry_get_url(url, num_retries=10, timeout=5):
     '''
     for i in range(0, num_retries):
         try:
-            result = requests.get(url, timeout=timeout)
+            result = requests.get(url, timeout=timeout, proxies={'http': ''})
             if hasattr(result, 'text'):
                 return result.text
             elif hasattr(result, 'content'):

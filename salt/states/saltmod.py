@@ -245,6 +245,9 @@ def state(
 
         m_ret = False
 
+        if 'return' in mdata and 'ret' not in mdata:
+            mdata['ret'] = mdata.pop('return')
+
         if mdata.get('failed', False):
             m_state = False
         else:
@@ -372,7 +375,12 @@ def function(
                 ).format(fun, tgt, str(False))
         ret['result'] = None
         return ret
-    cmd_ret = __salt__['saltutil.cmd'](tgt, fun, **cmd_kw)
+    try:
+        cmd_ret = __salt__['saltutil.cmd'](tgt, fun, **cmd_kw)
+    except Exception as exc:
+        ret['result'] = False
+        ret['comment'] = str(exc)
+        return ret
 
     changes = {}
     fail = set()
@@ -388,7 +396,6 @@ def function(
             'string. Ignored.'
         )
         fail_minions = ()
-
     for minion, mdata in six.iteritems(cmd_ret):
         m_ret = False
         if mdata.get('retcode'):
@@ -397,6 +404,8 @@ def function(
         if mdata.get('failed', False):
             m_func = False
         else:
+            if 'return' in mdata and 'ret' not in mdata:
+                mdata['ret'] = mdata.pop('return')
             m_ret = mdata['ret']
             m_func = (not fail_function and True) or __salt__[fail_function](m_ret)
 
@@ -406,28 +415,31 @@ def function(
             failures[minion] = m_ret and m_ret or 'Minion did not respond'
             continue
         changes[minion] = m_ret
-
-    if changes:
-        ret['changes'] = {'out': 'highstate', 'ret': changes}
-    if fail:
+    if not cmd_ret:
         ret['result'] = False
-        ret['comment'] = 'Running function {0} failed on minions: {1}'.format(name, ', '.join(fail))
+        ret['command'] = 'No minions responded'
     else:
-        ret['comment'] = 'Function ran successfully.'
-    if changes:
-        ret['comment'] += ' Function {0} ran on {1}.'.format(name, ', '.join(changes))
-    if failures:
-        ret['comment'] += '\nFailures:\n'
-        for minion, failure in six.iteritems(failures):
-            ret['comment'] += '\n'.join(
-                    (' ' * 4 + l)
-                    for l in salt.output.out_format(
-                        {minion: failure},
-                        'highstate',
-                        __opts__,
-                        ).splitlines()
-                    )
-            ret['comment'] += '\n'
+        if changes:
+            ret['changes'] = {'out': 'highstate', 'ret': changes}
+        if fail:
+            ret['result'] = False
+            ret['comment'] = 'Running function {0} failed on minions: {1}'.format(name, ', '.join(fail))
+        else:
+            ret['comment'] = 'Function ran successfully.'
+        if changes:
+            ret['comment'] += ' Function {0} ran on {1}.'.format(name, ', '.join(changes))
+        if failures:
+            ret['comment'] += '\nFailures:\n'
+            for minion, failure in six.iteritems(failures):
+                ret['comment'] += '\n'.join(
+                        (' ' * 4 + l)
+                        for l in salt.output.out_format(
+                            {minion: failure},
+                            'highstate',
+                            __opts__,
+                            ).splitlines()
+                        )
+                ret['comment'] += '\n'
     return ret
 
 

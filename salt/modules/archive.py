@@ -6,6 +6,7 @@ A module to wrap (non-Windows) archive calls
 '''
 from __future__ import absolute_import
 import os
+import contextlib  # For < 2.7 compat
 
 # Import salt libs
 from salt.exceptions import SaltInvocationError, CommandExecutionError
@@ -184,7 +185,7 @@ def gunzip(gzipfile, template=None, runas=None):
 @salt.utils.decorators.which('zip')
 def cmd_zip(zip_file, sources, template=None, cwd=None, runas=None):
     '''
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
         In versions 2014.7.x and earlier, this function was known as
         ``archive.zip``.
 
@@ -226,7 +227,7 @@ def cmd_zip(zip_file, sources, template=None, cwd=None, runas=None):
         Create the zip file as the specified user. Defaults to the user under
         which the minion is running.
 
-        .. versionadded:: 2015.2.0
+        .. versionadded:: 2015.5.0
 
 
     CLI Example:
@@ -252,7 +253,7 @@ def zip_(zip_file, sources, template=None, cwd=None, runas=None):
     '''
     Uses the ``zipfile`` Python module to create zip files
 
-    .. versionchanged:: 2015.2.0
+    .. versionchanged:: 2015.5.0
         This function was rewritten to use Python's native zip file support.
         The old functionality has been preserved in the new function
         :mod:`archive.cmd_zip <salt.modules.archive.cmd_zip>`. For versions
@@ -389,7 +390,7 @@ def zip_(zip_file, sources, template=None, cwd=None, runas=None):
 def cmd_unzip(zip_file, dest, excludes=None,
               template=None, options=None, runas=None):
     '''
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
         In versions 2014.7.x and earlier, this function was known as
         ``archive.unzip``.
 
@@ -429,7 +430,7 @@ def cmd_unzip(zip_file, dest, excludes=None,
         Unpack the zip file as the specified user. Defaults to the user under
         which the minion is running.
 
-        .. versionadded:: 2015.2.0
+        .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -461,7 +462,7 @@ def unzip(zip_file, dest, excludes=None, template=None, runas=None):
     '''
     Uses the ``zipfile`` Python module to unpack zip files
 
-    .. versionchanged:: 2015.2.0
+    .. versionchanged:: 2015.5.0
         This function was rewritten to use Python's native zip file support.
         The old functionality has been preserved in the new function
         :mod:`archive.cmd_unzip <salt.modules.archive.cmd_unzip>`. For versions
@@ -521,7 +522,7 @@ def unzip(zip_file, dest, excludes=None, template=None, runas=None):
         # variable from being defined and cause a NameError in the return
         # statement at the end of the function.
         cleaned_files = []
-        with zipfile.ZipFile(zip_file) as zfile:
+        with contextlib.closing(zipfile.ZipFile(zip_file, "r")) as zfile:
             files = zfile.namelist()
 
             if isinstance(excludes, string_types):

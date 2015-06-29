@@ -22,6 +22,10 @@ from salt.exceptions import CommandExecutionError
 # Import 3rd-party libs
 import salt.ext.six as six
 from salt.ext.six.moves import range  # pylint: disable=import-error,no-name-in-module,redefined-builtin
+if six.PY3:
+    import ipaddress
+else:
+    import salt.ext.ipaddress as ipaddress
 
 
 log = logging.getLogger(__name__)
@@ -50,22 +54,10 @@ def wol(mac, bcast='255.255.255.255', destport=9):
         salt '*' network.wol 080027136977 255.255.255.255 7
         salt '*' network.wol 08:00:27:13:69:77 255.255.255.255 7
     '''
-    if len(mac) == 12:
-        pass
-    elif len(mac) == 17:
-        sep = mac[2]
-        mac = mac.replace(sep, '')
-    else:
-        raise ValueError('Invalid MAC address')
+    dest = salt.utils.mac_str_to_bytes(mac)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    dest = ('\\x' + mac[0:2]).decode('string_escape') + \
-           ('\\x' + mac[2:4]).decode('string_escape') + \
-           ('\\x' + mac[4:6]).decode('string_escape') + \
-           ('\\x' + mac[6:8]).decode('string_escape') + \
-           ('\\x' + mac[8:10]).decode('string_escape') + \
-           ('\\x' + mac[10:12]).decode('string_escape')
-    sock.sendto('\xff' * 6 + dest * 16, (bcast, int(destport)))
+    sock.sendto(b'\xff' * 6 + dest * 16, (bcast, int(destport)))
     return True
 
 
@@ -79,13 +71,17 @@ def ping(host, timeout=False, return_boolean=False):
 
         salt '*' network.ping archlinux.org
 
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     Return a True or False instead of ping output.
+
+    .. code-block:: bash
 
         salt '*' network.ping archlinux.org return_boolean=True
 
     Set the time to wait for a response in seconds.
+
+    .. code-block:: bash
 
         salt '*' network.ping archlinux.org timeout=3
     '''
@@ -675,9 +671,23 @@ def interface_ip(iface):
     return salt.utils.network.interface_ip(iface)
 
 
-def subnets():
+def subnets(interfaces=None):
     '''
-    Returns a list of subnets to which the host belongs
+    Returns a list of IPv4 subnets to which the host belongs
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' network.subnets
+        salt '*' network.subnets interfaces=eth1
+    '''
+    return salt.utils.network.subnets(interfaces)
+
+
+def subnets6():
+    '''
+    Returns a list of IPv6 subnets to which the host belongs
 
     CLI Example:
 
@@ -685,7 +695,7 @@ def subnets():
 
         salt '*' network.subnets
     '''
-    return salt.utils.network.subnets()
+    return salt.utils.network.subnets6()
 
 
 def in_subnet(cidr):
@@ -711,22 +721,25 @@ def ip_in_subnet(ip_addr, cidr):
 
         salt '*' network.ip_in_subnet 172.17.0.4 172.16.0.0/12
     '''
-    return salt.utils.network.ip_in_subnet(ip_addr, cidr)
+    return salt.utils.network.in_subnet(cidr, ip_addr)
 
 
-def calculate_subnet(ip_addr, netmask):
+def calc_net(ip_addr, netmask=None):
     '''
-    Returns the CIDR of a subnet based on an IP address and network.
+    Returns the CIDR of a subnet based on
+    an IP address (CIDR notation supported)
+    and optional netmask.
 
     CLI Example:
 
     .. code-block:: bash
 
-        salt '*' network.calculate_subnet 172.17.0.5 255.255.255.240
+        salt '*' network.calc_net 172.17.0.5 255.255.255.240
+        salt '*' network.calc_net 2a02:f6e:a000:80:84d8:8332:7866:4e07/64
 
     .. versionadded:: Beryllium
     '''
-    return salt.utils.network.calculate_subnet(ip_addr, netmask)
+    return salt.utils.network.calc_net(ip_addr, netmask)
 
 
 def ip_addrs(interface=None, include_loopback=False, cidr=None):
@@ -753,11 +766,13 @@ def ip_addrs(interface=None, include_loopback=False, cidr=None):
 ipaddrs = ip_addrs
 
 
-def ip_addrs6(interface=None, include_loopback=False):
+def ip_addrs6(interface=None, include_loopback=False, cidr=None):
     '''
     Returns a list of IPv6 addresses assigned to the host. ::1 is ignored,
     unless 'include_loopback=True' is indicated. If 'interface' is provided,
     then only IP addresses from that interface will be returned.
+    Providing a CIDR via 'cidr="2000::/3"' will return only the addresses
+    which are within that subnet.
 
     CLI Example:
 
@@ -765,8 +780,12 @@ def ip_addrs6(interface=None, include_loopback=False):
 
         salt '*' network.ip_addrs6
     '''
-    return salt.utils.network.ip_addrs6(interface=interface,
+    addrs = salt.utils.network.ip_addrs6(interface=interface,
                                         include_loopback=include_loopback)
+    if cidr:
+        return [i for i in addrs if salt.utils.network.ip_in_subnet(cidr, [i])]
+    else:
+        return addrs
 
 ipaddrs6 = ip_addrs6
 
@@ -929,12 +948,7 @@ def connect(host, port=None, **kwargs):
             skt.shutdown(2)
     except Exception as exc:
         ret['result'] = False
-        try:
-            errno, errtxt = exc
-        except ValueError:
-            ret['comment'] = 'Unable to connect to {0} ({1}) on {2} port {3}'.format(host, _address[0], proto, port)
-        else:
-            ret['comment'] = '{0}'.format(errtxt)
+        ret['comment'] = 'Unable to connect to {0} ({1}) on {2} port {3}'.format(host, _address[0], proto, port)
         return ret
 
     ret['result'] = True
@@ -947,12 +961,16 @@ def is_private(ip_addr):
     Check if the given IP address is a private address
 
     .. versionadded:: 2014.7.0
+    .. versionchanged:: Beryllium
+        IPv6 support
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt '*' network.is_private 10.0.0.3
     '''
-    return salt.utils.network.IPv4Address(ip_addr).is_private
+    return ipaddress.ip_address(ip_addr).is_private
 
 
 def is_loopback(ip_addr):
@@ -960,17 +978,24 @@ def is_loopback(ip_addr):
     Check if the given IP address is a loopback address
 
     .. versionadded:: 2014.7.0
+    .. versionchanged:: Beryllium
+        IPv6 support
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt '*' network.is_loopback 127.0.0.1
     '''
-    return salt.utils.network.IPv4Address(ip_addr).is_loopback
+    return ipaddress.ip_address(ip_addr).is_loopback
 
 
 def reverse_ip(ip_addr):
     '''
     Returns the reversed IP address
+
+    .. versionchanged:: Beryllium
+        IPv6 support
 
     CLI Example:
 
@@ -978,7 +1003,7 @@ def reverse_ip(ip_addr):
 
         salt '*' network.reverse_ip 172.17.0.4
     '''
-    return salt.utils.network.IPv4Address(ip_addr).reverse_pointer
+    return ipaddress.ip_address(ip_addr).reverse_pointer
 
 
 def _get_bufsize_linux(iface):
@@ -1013,7 +1038,9 @@ def get_bufsize(iface):
     '''
     Return network buffer sizes as a dict
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt '*' network.getbufsize
     '''
@@ -1057,7 +1084,9 @@ def mod_bufsize(iface, *args, **kwargs):
     '''
     Modify network interface buffers (currently linux only)
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt '*' network.getBuffers
     '''
@@ -1072,7 +1101,9 @@ def routes(family=None):
     '''
     Return currently configured routes from routing table
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt '*' network.routes
     '''
@@ -1101,7 +1132,9 @@ def default_route(family=None):
     '''
     Return default route(s) from routing table
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt '*' network.default_route
     '''

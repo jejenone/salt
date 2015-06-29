@@ -68,7 +68,7 @@ be adjusted for the minion via the `mine_interval` option:
 Mine in Salt-SSH
 ================
 
-As of the 2015.2.0 release of salt, salt-ssh supports ``mine.get``.
+As of the 2015.5.0 release of salt, salt-ssh supports ``mine.get``.
 
 Because the minions cannot provide their own ``mine_functions`` configuration,
 we retrieve the args for specified mine functions in one of three places,
@@ -147,7 +147,7 @@ to add them to the pool of load balanced servers.
 
     <...file contents snipped...>
 
-    {% for server, addrs in salt['mine.get']('roles:web', 'network.ip_addrs', expr_form='grain').items() %}
+    {% for server, addrs in salt['mine.get']('roles:web', 'network.ip_addrs', expr_form='pillar').items() %}
     server {{ server }} {{ addrs[0] }}:80 check
     {% endfor %}
 

@@ -7,12 +7,16 @@ Connection module for Amazon IAM
 :configuration: This module accepts explicit iam credentials but can also utilize
     IAM roles assigned to the instance trough Instance Profiles. Dynamic
     credentials are then automatically obtained from AWS API and no further
-    configuration is necessary. More Information available at::
+    configuration is necessary. More Information available at:
 
-       http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
+    .. code-block:: text
+
+        http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
 
     If IAM roles are not used you need to specify them either in a pillar or
-    in the minion's config file::
+    in the minion's config file:
+
+    .. code-block:: yaml
 
         iam.keyid: GKTADJGHEIQSXMKKRBJ08H
         iam.key: askdjghsdfjkghWupUjasdflkdfklgjsdfjajkghs
@@ -21,6 +25,8 @@ Connection module for Amazon IAM
     It's also possible to specify key, keyid and region via a profile, either
     as a passed in dict, or as a string to pull from pillars or minion config:
 
+    .. code-block:: yaml
+
         myprofile:
             keyid: GKTADJGHEIQSXMKKRBJ08H
             key: askdjghsdfjkghWupUjasdflkdfklgjsdfjajkghs
@@ -28,16 +34,19 @@ Connection module for Amazon IAM
 
 :depends: boto
 '''
-from __future__ import absolute_import
+# keep lint from choking on _get_conn and _cache_id
+#pylint: disable=E0602
 
 # Import Python libs
+from __future__ import absolute_import
 import logging
 import json
 
-log = logging.getLogger(__name__)
+# Import salt libs
+import salt.utils.odict as odict
 
 # Import third party libs
-# pylint: disable=import-error
+# pylint: disable=unused-import
 from salt.ext.six import string_types
 from salt.ext.six.moves.urllib.parse import unquote as _unquote  # pylint: disable=no-name-in-module
 try:
@@ -47,10 +56,9 @@ try:
     HAS_BOTO = True
 except ImportError:
     HAS_BOTO = False
-# pylint: enable=import-error
+# pylint: enable=unused-import
 
-# Import salt libs
-import salt.utils.odict as odict
+log = logging.getLogger(__name__)
 
 
 def __virtual__():
@@ -59,6 +67,7 @@ def __virtual__():
     '''
     if not HAS_BOTO:
         return False
+    __utils__['boto.assign_funcs'](__name__, 'iam')
     return True
 
 
@@ -67,13 +76,14 @@ def instance_profile_exists(name, region=None, key=None, keyid=None,
     '''
     Check to see if an instance profile exists.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.instance_profile_exists myiprofile
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         # Boto weirdly returns an exception here if an instance profile doesn't
         # exist.
@@ -88,13 +98,14 @@ def create_instance_profile(name, region=None, key=None, keyid=None,
     '''
     Create an instance profile.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.create_instance_profile myiprofile
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if instance_profile_exists(name, region, key, keyid, profile):
         return True
     try:
@@ -115,13 +126,14 @@ def delete_instance_profile(name, region=None, key=None, keyid=None,
     '''
     Delete an instance profile.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.delete_instance_profile myiprofile
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not instance_profile_exists(name, region, key, keyid, profile):
         return True
     try:
@@ -139,11 +151,13 @@ def role_exists(name, region=None, key=None, keyid=None, profile=None):
     '''
     Check to see if an IAM role exists.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.role_exists myirole
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         conn.get_role(name)
         return True
@@ -153,18 +167,32 @@ def role_exists(name, region=None, key=None, keyid=None, profile=None):
 
 def describe_role(name, region=None, key=None, keyid=None, profile=None):
     '''
-    Get information for a role
+    Get information for a role.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.describe_role myirole
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.get_role(name)
         if not info:
             return False
-        return info
+        role = info.get_role_response.get_role_result.role
+        role['assume_role_policy_document'] = json.loads(_unquote(
+            role.assume_role_policy_document
+        ))
+        # If Sid wasn't defined by the user, boto will still return a Sid in
+        # each policy. To properly check idempotently, let's remove the Sid
+        # from the return if it's not actually set.
+        for policy_key, policy in role['assume_role_policy_document'].items():
+            if policy_key == 'Statement':
+                for val in policy:
+                    if 'Sid' in val and not val['Sid']:
+                        del val['Sid']
+        return role
     except boto.exception.BotoServerError as e:
         log.debug(e)
         msg = 'Failed to get {0} information.'
@@ -175,11 +203,13 @@ def describe_role(name, region=None, key=None, keyid=None, profile=None):
 def create_user(user_name, path=None, region=None, key=None, keyid=None,
                 profile=None):
     '''
-    Create a user
+    Create a user.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.create_user myuser
     '''
@@ -187,7 +217,7 @@ def create_user(user_name, path=None, region=None, key=None, keyid=None,
         path = '/'
     if get_user(user_name, region, key, keyid, profile):
         return True
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         conn.create_user(user_name, path)
         log.info('Created user : {0}.'.format(user_name))
@@ -202,15 +232,17 @@ def create_user(user_name, path=None, region=None, key=None, keyid=None,
 def get_all_access_keys(user_name, marker=None, max_items=None,
                         region=None, key=None, keyid=None, profile=None):
     '''
-    Get all access keys from a user
+    Get all access keys from a user.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.get_all_access_keys myuser
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         return conn.get_all_access_keys(user_name, marker, max_items)
     except boto.exception.BotoServerError as e:
@@ -219,18 +251,41 @@ def get_all_access_keys(user_name, marker=None, max_items=None,
         return str(e)
 
 
-def delete_access_key(access_key_id, user_name=None, region=None, key=None,
-                      keyid=None, profile=None):
+def create_access_key(user_name, region=None, key=None, keyid=None, profile=None):
     '''
-    Delete access key id from a user
+    Create access key id for a user.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.create_access_key myuser
+    '''
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+    try:
+        return conn.create_access_key(user_name)
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        log.error('Failed to create access key.')
+        return str(e)
+
+
+def delete_access_key(access_key_id, user_name=None, region=None, key=None,
+                      keyid=None, profile=None):
+    '''
+    Delete access key id from a user.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.delete_access_key myuser
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         return conn.delete_access_key(access_key_id, user_name)
     except boto.exception.BotoServerError as e:
@@ -242,17 +297,19 @@ def delete_access_key(access_key_id, user_name=None, region=None, key=None,
 def delete_user(user_name, region=None, key=None, keyid=None,
                 profile=None):
     '''
-    Delete a user
+    Delete a user.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.delete_user myuser
     '''
     if not get_user(user_name, region, key, keyid, profile):
         return True
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         conn.delete_user(user_name)
         log.info('Deleted user : {0} .'.format(user_name))
@@ -265,15 +322,17 @@ def delete_user(user_name, region=None, key=None, keyid=None,
 
 def get_user(user_name=None, region=None, key=None, keyid=None, profile=None):
     '''
-    Get user information
+    Get user information.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.get_user myuser
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.get_user(user_name)
         if not info:
@@ -289,11 +348,13 @@ def get_user(user_name=None, region=None, key=None, keyid=None, profile=None):
 def create_group(group_name, path=None, region=None, key=None, keyid=None,
                  profile=None):
     '''
-    Create a group
+    Create a group.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.create_group group
     '''
@@ -301,7 +362,7 @@ def create_group(group_name, path=None, region=None, key=None, keyid=None,
         path = '/'
     if get_group(group_name, region, key, keyid, profile):
         return True
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         conn.create_group(group_name, path)
         log.info('Created group : {0}.'.format(group_name))
@@ -316,15 +377,17 @@ def create_group(group_name, path=None, region=None, key=None, keyid=None,
 def get_group(group_name, marker=None, max_items=None, region=None, key=None,
               keyid=None, profile=None):
     '''
-    Get group information
+    Get group information.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.get_group mygroup
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.get_group(group_name, marker, max_items)
         if not info:
@@ -340,27 +403,25 @@ def get_group(group_name, marker=None, max_items=None, region=None, key=None,
 def add_user_to_group(user_name, group_name, region=None, key=None, keyid=None,
                       profile=None):
     '''
-    Add user to group
+    Add user to group.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.add_user_to_group myuser mygroup
     '''
-    group = get_group(group_name=group_name, region=region, key=key, keyid=keyid, profile=profile)
-    if group:
-        for _users in group['get_group_response']['get_group_result']['users']:
-            if user_name == _users['user_name']:
-                msg = 'Username : {0} is already in group {1}.'
-                log.info(msg.format(user_name, group_name))
-                return 'Exists'
     user = get_user(user_name, region, key, keyid, profile)
-    if not group or not user:
-        msg = 'Username : {0} or group {1} do not exist.'
+    if not user:
+        msg = 'Username : {0} does not exist.'
         log.error(msg.format(user_name, group_name))
         return False
-    conn = _get_conn(region, key, keyid, profile)
+    if user_exists_in_group(user_name, group_name, region=None, key=None, keyid=None,
+                            profile=None):
+        return True
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.add_user_to_group(group_name, user_name)
         if not info:
@@ -373,6 +434,64 @@ def add_user_to_group(user_name, group_name, region=None, key=None, keyid=None,
         return False
 
 
+def user_exists_in_group(user_name, group_name, region=None, key=None, keyid=None,
+                         profile=None):
+    '''
+    Check if user exists in group.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.user_exists_in_group myuser mygroup
+    '''
+    group = get_group(group_name=group_name, region=region, key=key, keyid=keyid,
+                      profile=profile)
+    if group:
+        for _users in group['get_group_response']['get_group_result']['users']:
+            if user_name == _users['user_name']:
+                msg = 'Username : {0} is already in group {1}.'
+                log.info(msg.format(user_name, group_name))
+                return True
+    return False
+
+
+def remove_user_from_group(group_name, user_name, region=None, key=None, keyid=None,
+                           profile=None):
+    '''
+    Remove user from group.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.remove_user_from_group mygroup myuser
+    '''
+    user = get_user(user_name, region, key, keyid, profile)
+    if not user:
+        msg = 'Username : {0} does not exist.'
+        log.error(msg.format(user_name, group_name))
+        return False
+    if not user_exists_in_group(user_name, group_name, region=None, key=None, keyid=None,
+                                profile=None):
+        return True
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+    try:
+        info = conn.remove_user_from_group(group_name, user_name)
+        if not info:
+            return False
+        return info
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to remove user {0} from group {1}.'
+        log.error(msg.format(user_name, group_name))
+        return False
+
+
 def put_group_policy(group_name, policy_name, policy_json, region=None, key=None,
                      keyid=None, profile=None):
     '''
@@ -380,28 +499,63 @@ def put_group_policy(group_name, policy_name, policy_json, region=None, key=None
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.put_group_policy mygroup policyname policyrules
     '''
     group = get_group(group_name, region, key, keyid, profile)
-    if group:
-        conn = _get_conn(region, key, keyid, profile)
-        try:
-            created = conn.put_group_policy(group_name, policy_name,
-                                            policy_json)
-            if created:
-                log.info('Created policy for group {0}.'.format(group_name))
-                return True
-            msg = 'Could not create policy for group {0}'
-            log.error(msg.format(group_name))
-        except boto.exception.BotoServerError as e:
-            log.debug(e)
-            msg = 'Failed to create policy for group {0}'
-            log.error(msg.format(group_name))
-    else:
+    if not group:
         log.error('Group {0} does not exist'.format(group_name))
+        return False
+    conn = _get_conn(region, key, keyid, profile)
+    try:
+        if not isinstance(policy_json, string_types):
+            policy_json = json.dumps(policy_json)
+        created = conn.put_group_policy(group_name, policy_name,
+                                        policy_json)
+        if created:
+            log.info('Created policy for group {0}.'.format(group_name))
+            return True
+        msg = 'Could not create policy for group {0}'
+        log.error(msg.format(group_name))
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to create policy for group {0}'
+        log.error(msg.format(group_name))
     return False
+
+
+def delete_group_policy(group_name, policy_name, region=None, key=None,
+                        keyid=None, profile=None):
+    '''
+    Delete a group policy.
+
+    CLI Example::
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.delete_group_policy mygroup mypolicy
+    '''
+    conn = _get_conn(region, key, keyid, profile)
+    if not conn:
+        return False
+    _policy = get_group_policy(
+        group_name, policy_name, region, key, keyid, profile
+    )
+    if not _policy:
+        return True
+    try:
+        conn.delete_group_policy(group_name, policy_name)
+        msg = 'Successfully deleted {0} policy for group {1}.'
+        log.info(msg.format(policy_name, group_name))
+        return True
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to delete {0} policy for group {1}.'
+        log.error(msg.format(policy_name, group_name))
+        return False
 
 
 def get_group_policy(group_name, policy_name, region=None, key=None,
@@ -411,11 +565,13 @@ def get_group_policy(group_name, policy_name, region=None, key=None,
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.get_group_policy mygroup policyname
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.get_group_policy(group_name, policy_name)
         log.debug('info for group policy is : {0}'.format(info))
@@ -432,6 +588,29 @@ def get_group_policy(group_name, policy_name, region=None, key=None,
         return False
 
 
+def get_all_group_policies(group_name, region=None, key=None, keyid=None,
+                           profile=None):
+    '''
+    Get a list of policy names from a group.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.get_all_group_policies mygroup
+    '''
+    conn = _get_conn(region, key, keyid, profile)
+    if not conn:
+        return False
+    try:
+        response = conn.get_all_group_policies(group_name)
+        _list = response.list_group_policies_response.list_group_policies_result
+        return _list.policy_names
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        return []
+
+
 def create_login_profile(user_name, password, region=None, key=None,
                          keyid=None, profile=None):
     '''
@@ -440,7 +619,9 @@ def create_login_profile(user_name, password, region=None, key=None,
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.create_login_profile user_name password
     '''
@@ -449,7 +630,7 @@ def create_login_profile(user_name, password, region=None, key=None,
         msg = 'Username {0} does not exist'
         log.error(msg.format(user_name))
         return False
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.create_login_profile(user_name, password)
         log.info('Created profile for user {0}.'.format(user_name))
@@ -478,11 +659,13 @@ def update_account_password_policy(allow_users_to_change_password=None,
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.update_account_password_policy True
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         conn.update_account_password_policy(allow_users_to_change_password,
                                             hard_expiry, max_password_age,
@@ -506,11 +689,13 @@ def get_account_policy(region=None, key=None, keyid=None, profile=None):
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
 
-    salt myminion boto_iam.get_account_policy
+    .. code-block:: bash
+
+        salt myminion boto_iam.get_account_policy
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.get_account_password_policy()
         return info.get_account_password_policy_response.get_account_password_policy_result.password_policy
@@ -526,13 +711,14 @@ def create_role(name, policy_document=None, path=None, region=None, key=None,
     '''
     Create an instance role.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.create_role myrole
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if role_exists(name, region, key, keyid, profile):
         return True
     try:
@@ -551,13 +737,14 @@ def delete_role(name, region=None, key=None, keyid=None, profile=None):
     '''
     Delete an IAM role.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.delete_role myirole
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not role_exists(name, region, key, keyid, profile):
         return True
     try:
@@ -575,13 +762,14 @@ def profile_associated(role_name, profile_name, region, key, keyid, profile):
     '''
     Check to see if an instance profile is associated with an IAM role.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.profile_associated myirole myiprofile
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     # The IAM module of boto doesn't return objects. Instead you need to grab
     # values through its properties. Sigh.
     try:
@@ -603,13 +791,14 @@ def associate_profile_to_role(profile_name, role_name, region=None, key=None,
     '''
     Associate an instance profile with an IAM role.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.associate_profile_to_role myirole myiprofile
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not role_exists(role_name, region, key, keyid, profile):
         log.error('IAM role {0} does not exist.'.format(role_name))
         return False
@@ -637,13 +826,14 @@ def disassociate_profile_from_role(profile_name, role_name, region=None,
     '''
     Disassociate an instance profile from an IAM role.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.disassociate_profile_from_role myirole myiprofile
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     if not role_exists(role_name, region, key, keyid, profile):
         log.error('IAM role {0} does not exist.'.format(role_name))
         return False
@@ -671,13 +861,14 @@ def list_role_policies(role_name, region=None, key=None, keyid=None,
     '''
     Get a list of policy names from a role.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.list_role_policies myirole
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         response = conn.list_role_policies(role_name)
         _list = response.list_role_policies_response.list_role_policies_result
@@ -692,13 +883,14 @@ def get_role_policy(role_name, policy_name, region=None, key=None,
     '''
     Get a role policy.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.get_role_policy myirole mypolicy
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     try:
         _policy = conn.get_role_policy(role_name, policy_name)
         # I _hate_ you for not giving me an object boto.
@@ -716,13 +908,14 @@ def create_role_policy(role_name, policy_name, policy, region=None, key=None,
     '''
     Create or modify a role policy.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.create_role_policy myirole mypolicy '{"MyPolicy": "Statement": [{"Action": ["sqs:*"], "Effect": "Allow", "Resource": ["arn:aws:sqs:*:*:*"], "Sid": "MyPolicySqs1"}]}'
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     _policy = get_role_policy(role_name, policy_name, region, key, keyid, profile)
     mode = 'create'
     if _policy:
@@ -752,13 +945,14 @@ def delete_role_policy(role_name, policy_name, region=None, key=None,
     '''
     Delete a role policy.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.delete_role_policy myirole mypolicy
     '''
-    conn = _get_conn(region, key, keyid, profile)
-    if not conn:
-        return False
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
     _policy = get_role_policy(role_name, policy_name, region, key, keyid, profile)
     if not _policy:
         return True
@@ -774,17 +968,86 @@ def delete_role_policy(role_name, policy_name, region=None, key=None,
         return False
 
 
+def update_assume_role_policy(role_name, policy_document, region=None,
+                              key=None, keyid=None, profile=None):
+    '''
+    Update an assume role policy for a role.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.update_assume_role_policy myrole '{"Statement":"..."}'
+    '''
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+
+    if isinstance(policy_document, string_types):
+        policy_document = json.loads(policy_document,
+                                     object_pairs_hook=odict.OrderedDict)
+    try:
+        _policy_document = json.dumps(policy_document)
+        conn.update_assume_role_policy(role_name, _policy_document)
+        msg = 'Successfully updated assume role policy for role {0}.'
+        log.info(msg.format(role_name))
+        return True
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to update assume role policy for role {0}.'
+        log.error(msg.format(role_name))
+        return False
+
+
+def build_policy(region=None, key=None, keyid=None, profile=None):
+    '''
+    Build a default assume role policy.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.build_policy
+    '''
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+    if hasattr(conn, 'build_policy'):
+        policy = json.loads(conn.build_policy())
+    elif hasattr(conn, '_build_policy'):
+        policy = json.loads(conn._build_policy())
+    else:
+        return {}
+    # The format we get from build_policy isn't going to be what we get back
+    # from AWS for the exact same policy. AWS converts single item list values
+    # into strings, so let's do the same here.
+    for key, policy_val in policy.items():
+        for statement in policy_val:
+            if (isinstance(statement['Action'], list)
+                    and len(statement['Action']) == 1):
+                statement['Action'] = statement['Action'][0]
+            if (isinstance(statement['Principal']['Service'], list)
+                    and len(statement['Principal']['Service']) == 1):
+                statement['Principal']['Service'] = statement['Principal']['Service'][0]
+    # build_policy doesn't add a version field, which AWS is going to set to a
+    # default value, when we get it back, so let's set it.
+    policy['Version'] = '2008-10-17'
+    return policy
+
+
 def get_account_id(region=None, key=None, keyid=None, profile=None):
     '''
     Get a the AWS account id associated with the used credentials.
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.get_account_id
     '''
     cache_key = 'boto_iam.account_id'
     if cache_key not in __context__:
-        conn = _get_conn(region, key, keyid, profile)
+        conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
         try:
             ret = conn.get_user()
             # The get_user call returns an user ARN:
@@ -810,22 +1073,142 @@ def get_account_id(region=None, key=None, keyid=None, profile=None):
     return __context__[cache_key]
 
 
-def upload_server_cert(cert_name, cert_body, private_key, cert_chain=None, path=None,
-                       region=None, key=None, keyid=None, profile=None):
+def get_all_user_policies(user_name, marker=None, max_items=None, region=None, key=None, keyid=None, profile=None):
     '''
-    Upload a certificate to Amazon
+    Get all user policies.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.get_group mygroup
+    '''
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+    try:
+        info = conn.get_all_user_policies(user_name, marker, max_items)
+        if not info:
+            return False
+        _list = info.list_user_policies_response.list_user_policies_result
+        return _list.policy_names
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to get user {0} policy.'
+        log.error(msg.format(user_name))
+        return False
+
+
+def get_user_policy(user_name, policy_name, region=None, key=None, keyid=None, profile=None):
+    '''
+    Retrieves the specified policy document for the specified user.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.get_user_policy myuser mypolicyname
+    '''
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
+    try:
+        info = conn.get_user_policy(user_name, policy_name)
+        log.debug('Info for user policy is : {0}.'.format(info))
+        if not info:
+            return False
+        info = info.get_user_policy_response.get_user_policy_result.policy_document
+        info = _unquote(info)
+        info = json.loads(info, object_pairs_hook=odict.OrderedDict)
+        return info
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to get user {0} policy.'
+        log.error(msg.format(user_name))
+        return False
+
+
+def put_user_policy(user_name, policy_name, policy_json, region=None, key=None, keyid=None, profile=None):
+    '''
+    Adds or updates the specified policy document for the specified user.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.put_user_policy myuser policyname policyrules
+    '''
+    user = get_user(user_name, region, key, keyid, profile)
+    if not user:
+        log.error('User {0} does not exist'.format(user_name))
+        return False
+    conn = _get_conn(region, key, keyid, profile)
+    try:
+        if not isinstance(policy_json, string_types):
+            policy_json = json.dumps(policy_json)
+        created = conn.put_user_policy(user_name, policy_name,
+                                       policy_json)
+        if created:
+            log.info('Created policy for user {0}.'.format(user_name))
+            return True
+        msg = 'Could not create policy for user {0}.'
+        log.error(msg.format(user_name))
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to create policy for user {0}.'
+        log.error(msg.format(user_name))
+    return False
+
+
+def delete_user_policy(user_name, policy_name, region=None, key=None, keyid=None, profile=None):
+    '''
+    Delete a user policy.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iam.delete_user_policy myuser mypolicy
+    '''
+    conn = _get_conn(region, key, keyid, profile)
+    if not conn:
+        return False
+    _policy = get_user_policy(
+        user_name, policy_name, region, key, keyid, profile
+    )
+    if not _policy:
+        return True
+    try:
+        conn.delete_user_policy(user_name, policy_name)
+        msg = 'Successfully deleted {0} policy for user {1}.'
+        log.info(msg.format(policy_name, user_name))
+        return True
+    except boto.exception.BotoServerError as e:
+        log.debug(e)
+        msg = 'Failed to delete {0} policy for user {1}.'
+        log.error(msg.format(policy_name, user_name))
+        return False
+
+
+def upload_server_cert(cert_name, cert_body, private_key, cert_chain=None, path=None,
+                       region=None, key=None, keyid=None, profile=None):
+    '''
+    Upload a certificate to Amazon.
+
+    .. versionadded:: Beryllium
+
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.upload_server_cert mycert_name crt priv_key
 
     :param cert_name: The name for the server certificate. Do not include the path in this value.
     :param cert_body: The contents of the public key certificate in PEM-encoded format.
     :param private_key: The contents of the private key in PEM-encoded format.
-    :param cert_chain:  The contents of the certificate chain. This is typically a
-    concatenation of the PEM-encoded public key certificates of the chain.
+    :param cert_chain:  The contents of the certificate chain. This is typically a concatenation of the PEM-encoded public key certificates of the chain.
     :param path: The path for the server certificate.
     :param region: The name of the region to connect to.
     :param key: The key to be used in order to connect
@@ -837,7 +1220,7 @@ def upload_server_cert(cert_name, cert_body, private_key, cert_chain=None, path=
     exists = get_server_certificate(cert_name, region, key, keyid, profile)
     if exists:
         return True
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.upload_server_cert(cert_name, cert_body, private_key, cert_chain)
         log.info('Created certificate {0}.'.format(cert_name))
@@ -855,11 +1238,13 @@ def get_server_certificate(cert_name, region=None, key=None, keyid=None, profile
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.get_server_certificate mycert_name
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         info = conn.get_server_certificate(cert_name)
         if not info:
@@ -874,15 +1259,17 @@ def get_server_certificate(cert_name, region=None, key=None, keyid=None, profile
 
 def delete_server_cert(cert_name, region=None, key=None, keyid=None, profile=None):
     '''
-    Deletes a certificate from Amazon
+    Deletes a certificate from Amazon.
 
     .. versionadded:: Beryllium
 
-    CLI example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt myminion boto_iam.delete_server_cert mycert_name
     '''
-    conn = _get_conn(region, key, keyid, profile)
+    conn = _get_conn(region=region, key=key, keyid=keyid, profile=profile)
     try:
         return conn.delete_server_cert(cert_name)
     except boto.exception.BotoServerError as e:
@@ -890,37 +1277,3 @@ def delete_server_cert(cert_name, region=None, key=None, keyid=None, profile=Non
         msg = 'Failed to delete certificate {0}.'
         log.error(msg.format(cert_name))
         return False
-
-
-def _get_conn(region, key, keyid, profile):
-    '''
-    Get a boto connection to IAM.
-    '''
-    if profile:
-        if isinstance(profile, string_types):
-            _profile = __salt__['config.option'](profile)
-        elif isinstance(profile, dict):
-            _profile = profile
-        key = _profile.get('key', None)
-        keyid = _profile.get('keyid', None)
-        region = _profile.get('region', None)
-
-    if not region and __salt__['config.option']('iam.region'):
-        region = __salt__['config.option']('iam.region')
-
-    if not region:
-        region = 'us-east-1'
-
-    if not key and __salt__['config.option']('iam.key'):
-        key = __salt__['config.option']('iam.key')
-    if not keyid and __salt__['config.option']('iam.keyid'):
-        keyid = __salt__['config.option']('iam.keyid')
-
-    try:
-        conn = boto.iam.connect_to_region(region, aws_access_key_id=keyid,
-                                          aws_secret_access_key=key)
-    except boto.exception.NoAuthHandlerFound:
-        log.error('No authentication credentials found when attempting to'
-                  ' make boto iam connection.')
-        return None
-    return conn

@@ -12,7 +12,6 @@ import copy
 # Import salt libs
 import salt.client
 import salt.output
-import salt.utils.minions
 from salt.utils import print_cli
 
 # Import 3rd-party libs
@@ -31,19 +30,32 @@ class Batch(object):
         self.eauth = eauth if eauth else {}
         self.quiet = quiet
         self.local = salt.client.get_local_client(opts['conf_file'])
-        self.minions = self.__gather_minions()
+        self.minions, self.ping_gen = self.__gather_minions()
 
     def __gather_minions(self):
         '''
         Return a list of minions to use for the batch run
         '''
-        ckminions = salt.utils.minions.CkMinions(self.opts)
+        args = [self.opts['tgt'],
+                'test.ping',
+                [],
+                self.opts['timeout'],
+                ]
+
         selected_target_option = self.opts.get('selected_target_option', None)
         if selected_target_option is not None:
-            expr_form = selected_target_option
+            args.append(selected_target_option)
         else:
-            expr_form = self.opts.get('expr_form', 'glob')
-        return ckminions.check_minions(self.opts['tgt'], expr_form=expr_form)
+            args.append(self.opts.get('expr_form', 'glob'))
+
+        ping_gen = self.local.cmd_iter(*args, **self.eauth)
+
+        fret = set()
+        for ret in ping_gen:
+            m = next(six.iterkeys(ret))
+            if m is not None:
+                fret.add(m)
+        return (list(fret), ping_gen)
 
     def get_bnum(self):
         '''
@@ -98,7 +110,11 @@ class Batch(object):
             else:
                 for i in range(bnum - len(active)):
                     if to_run:
-                        next_.append(to_run.pop())
+                        minion_id = to_run.pop()
+                        if isinstance(minion_id, dict):
+                            next_.append(minion_id.keys()[0])
+                        else:
+                            next_.append(minion_id)
 
             active += next_
             args[0] = next_
@@ -122,6 +138,15 @@ class Batch(object):
             else:
                 time.sleep(0.02)
             parts = {}
+
+            # see if we found more minions
+            for ping_ret in self.ping_gen:
+                if ping_ret is None:
+                    break
+                m = next(ping_ret.iterkeys())
+                if m not in self.minions:
+                    self.minions.append(m)
+                    to_run.append(m)
 
             for queue in iters:
                 try:
@@ -156,7 +181,8 @@ class Batch(object):
                                 parts[minion]['ret'] = {}
 
             for minion, data in six.iteritems(parts):
-                active.remove(minion)
+                if minion in active:
+                    active.remove(minion)
                 if self.opts.get('raw'):
                     yield data
                 else:

@@ -46,6 +46,14 @@ def __virtual__():
     return False
 
 
+def _get_portage():
+    '''
+    portage module must be reloaded or it can't catch the changes
+    in portage.* which had been added after when the module was loaded
+    '''
+    return reload(portage)
+
+
 def _porttree():
     return portage.db[portage.root]['porttree']
 
@@ -59,6 +67,19 @@ def _p_to_cp(p):
     if ret:
         return portage.cpv_getkey(ret[0])
     return None
+
+
+def _get_cpv(cp, installed=True):
+    '''
+    add version to category/package
+    @cp - name of package in format category/name
+    @installed - boolean value, if False, function returns cpv
+    for latest available package
+    '''
+    if installed:
+        return _get_portage().db[portage.root]['vartree'].dep_bestmatch(cp)
+    else:
+        return _porttree().dep_bestmatch(cp)
 
 
 def enforce_nice_config():
@@ -210,12 +231,30 @@ def _package_conf_ordering(conf, clean=True, keep_backup=False):
                     shutil.rmtree(triplet[0])
 
 
-def _merge_flags(*args):
+def _check_accept_keywords(approved, flag):
+    '''check compatibility of accept_keywords'''
+    if flag in approved:
+        return False
+    elif (flag.startswith('~') and flag[1:] in approved) \
+            or ('~'+flag in approved):
+        return False
+    else:
+        return True
+
+
+def _merge_flags(new_flags, old_flags=None, conf='any'):
     '''
     Merges multiple lists of flags removing duplicates and resolving conflicts
     giving priority to lasts lists.
     '''
-    tmp = portage.flatten(args)
+    if not old_flags:
+        old_flags = []
+    args = [old_flags, new_flags]
+    if conf == 'accept_keywords':
+        tmp = new_flags + \
+            [i for i in old_flags if _check_accept_keywords(new_flags, i)]
+    else:
+        tmp = portage.flatten(args)
     flags = {}
     for flag in tmp:
         if flag[0] == '-':
@@ -259,7 +298,7 @@ def append_to_package_conf(conf, atom='', flags=None, string='', overwrite=False
             new_flags = list(flags)
         else:
             atom = string.strip().split()[0]
-            new_flags = portage.dep.strip_empty(string.strip().split(' '))[1:]
+            new_flags = [flag for flag in string.strip().split(' ') if flag][1:]
             if '/' not in atom:
                 atom = _p_to_cp(atom)
                 string = '{0} {1}'.format(atom, ' '.join(new_flags))
@@ -320,7 +359,7 @@ def append_to_package_conf(conf, atom='', flags=None, string='', overwrite=False
                     new_contents += string.strip() + '\n'
                     added = True
                 else:
-                    old_flags = portage.dep.strip_empty(l_strip.split(' '))[1:]
+                    old_flags = [flag for flag in l_strip.split(' ') if flag][1:]
                     if conf == 'accept_keywords':
                         if not old_flags:
                             new_contents += l
@@ -329,7 +368,7 @@ def append_to_package_conf(conf, atom='', flags=None, string='', overwrite=False
                             continue
                         elif not new_flags:
                             continue
-                    merged_flags = _merge_flags(old_flags, new_flags)
+                    merged_flags = _merge_flags(new_flags, old_flags, conf)
                     if merged_flags:
                         new_contents += '{0} {1}\n'.format(
                             atom, ' '.join(merged_flags))
@@ -400,7 +439,7 @@ def get_flags_from_package_conf(conf, atom):
                 line_package = line.split()[0]
                 line_list = _porttree().dbapi.xmatch("match-all", line_package)
                 if match_list.issubset(line_list):
-                    f_tmp = portage.dep.strip_empty(line.strip().split()[1:])
+                    f_tmp = [flag for flag in line.strip().split(' ') if flag][1:]
                     if f_tmp:
                         flags.extend(f_tmp)
                     else:
@@ -484,3 +523,143 @@ def is_present(conf, atom):
                 if match_list.issubset(line_list):
                     return True
             return False
+
+
+def get_iuse(cp):
+    """
+    .. versionadded:: Beryllium
+    Gets the current IUSE flags from the tree
+    @type: cpv: string
+    @param cpv: cat/pkg
+    @rtype list
+    @returns [] or the list of IUSE flags
+    """
+    cpv = _get_cpv(cp)
+    try:
+        # aux_get might return dupes, so run them through set() to remove them
+        dirty_flags = _porttree().dbapi.aux_get(cpv, ["IUSE"])[0].split()
+        return list(set(dirty_flags))
+    except Exception as e:
+        return []
+
+
+def get_installed_use(cp, use="USE"):
+    """
+    .. versionadded:: Beryllium
+    Gets the installed USE flags from the VARDB
+    @type: cp: string
+    @param cp: cat/pkg
+    @type use: string
+    @param use: 1 of ["USE", "PKGUSE"]
+    @rtype list
+    @returns [] or the list of IUSE flags
+    """
+    portage = _get_portage()
+    cpv = _get_cpv(cp)
+    return portage.db[portage.root]["vartree"].dbapi.aux_get(cpv, [use])[0].split()
+
+
+def filter_flags(use, use_expand_hidden, usemasked, useforced):
+    """
+    .. versionadded:: Beryllium
+    Filter function to remove hidden or otherwise not normally
+    visible USE flags from a list.
+
+    @type use: list
+    @param use: the USE flag list to be filtered.
+    @type use_expand_hidden: list
+    @param  use_expand_hidden: list of flags hidden.
+    @type usemasked: list
+    @param usemasked: list of masked USE flags.
+    @type useforced: list
+    @param useforced: the forced USE flags.
+    @rtype: list
+    @return the filtered USE flags.
+    """
+    portage = _get_portage()
+    # clean out some environment flags, since they will most probably
+    # be confusing for the user
+    for f in use_expand_hidden:
+        f = f.lower()+ "_"
+        for x in use:
+            if f in x:
+                use.remove(x)
+    # clean out any arch's
+    archlist = portage.settings["PORTAGE_ARCHLIST"].split()
+    for a in use[:]:
+        if a in archlist:
+            use.remove(a)
+    # dbl check if any from usemasked  or useforced are still there
+    masked = usemasked + useforced
+    for a in use[:]:
+        if a in masked:
+            use.remove(a)
+    return use
+
+
+def get_all_cpv_use(cp):
+    """
+    .. versionadded:: Beryllium
+    Uses portage to determine final USE flags and settings for an emerge
+
+    @type cp: string
+    @param cp: eg cat/pkg
+    @rtype: lists
+    @return  use, use_expand_hidden, usemask, useforce
+    """
+    cpv = _get_cpv(cp)
+    portage = _get_portage()
+    use = None
+    _porttree().dbapi.settings.unlock()
+    try:
+        _porttree().dbapi.settings.setcpv(cpv, mydb=portage.portdb)
+        use = portage.settings['PORTAGE_USE'].split()
+        use_expand_hidden = portage.settings["USE_EXPAND_HIDDEN"].split()
+        usemask = list(_porttree().dbapi.settings.usemask)
+        useforce = list(_porttree().dbapi.settings.useforce)
+    except KeyError:
+        _porttree().dbapi.settings.reset()
+        _porttree().dbapi.settings.lock()
+        return [], [], [], []
+    # reset cpv filter
+    _porttree().dbapi.settings.reset()
+    _porttree().dbapi.settings.lock()
+    return use, use_expand_hidden, usemask, useforce
+
+
+def get_cleared_flags(cp):
+    '''
+    .. versionadded:: Beryllium
+    Uses portage for compare use flags which is used for installing package
+    and use flags which now exist int /etc/portage/package.use/
+    @type cp: string
+    @param cp: eg cat/pkg
+    @rtype: tuple
+    @rparam: tuple with two lists - list of used flags and
+    list of flags which will be used
+    '''
+    cpv = _get_cpv(cp)
+    final_use, use_expand_hidden, usemasked, useforced = get_all_cpv_use(cpv)
+    inst_flags = filter_flags(get_installed_use(cpv), use_expand_hidden,
+                                usemasked, useforced)
+    final_flags = filter_flags(final_use, use_expand_hidden,
+                                usemasked, useforced)
+    return inst_flags, final_flags
+
+
+def is_changed_uses(cp):
+    '''
+    .. versionadded:: Beryllium
+    Uses portage for determine if the use flags of installed package
+    is compatible with use flags in portage configs
+    @type cp: string
+    @param cp: eg cat/pkg
+    '''
+    cpv = _get_cpv(cp)
+    i_flags, conf_flags = get_cleared_flags(cpv)
+    for i in i_flags:
+        try:
+            conf_flags.remove(i)
+        except ValueError:
+            return True
+    return True if conf_flags else False

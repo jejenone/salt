@@ -20,6 +20,7 @@ import yaml
 import uuid
 import tempfile
 import binascii
+import sys
 
 # Import salt libs
 import salt.client.ssh.shell
@@ -37,6 +38,7 @@ import salt.utils.args
 import salt.utils.event
 import salt.utils.atomicfile
 import salt.utils.thin
+import salt.utils.url
 import salt.utils.verify
 import salt.utils.network
 from salt.utils import is_windows
@@ -193,11 +195,12 @@ class SSH(object):
                         'salt-ssh.rsa'
                         )
                     )
-        if not os.path.isfile(priv):
-            try:
-                salt.client.ssh.shell.gen_key(priv)
-            except OSError:
-                raise salt.exceptions.SaltClientError('salt-ssh could not be run because it could not generate keys.\n\nYou can probably resolve this by executing this script with increased permissions via sudo or by running as root.\nYou could also use the \'-c\' option to supply a configuration directory that you have permissions to read and write to.')
+        if priv != 'agent-forwarding':
+            if not os.path.isfile(priv):
+                try:
+                    salt.client.ssh.shell.gen_key(priv)
+                except OSError:
+                    raise salt.exceptions.SaltClientError('salt-ssh could not be run because it could not generate keys.\n\nYou can probably resolve this by executing this script with increased permissions via sudo or by running as root.\nYou could also use the \'-c\' option to supply a configuration directory that you have permissions to read and write to.')
         self.defaults = {
             'user': self.opts.get(
                 'ssh_user',
@@ -222,6 +225,10 @@ class SSH(object):
             'sudo': self.opts.get(
                 'ssh_sudo',
                 salt.config.DEFAULT_MASTER_OPTS['ssh_sudo']
+            ),
+            'identities_only': self.opts.get(
+                'ssh_identities_only',
+                salt.config.DEFAULT_MASTER_OPTS['ssh_identities_only']
             ),
         }
         if self.opts.get('rand_thin_dir'):
@@ -255,11 +262,10 @@ class SSH(object):
         '''
         Deploy the SSH key if the minions don't auth
         '''
-        if not isinstance(ret[host], dict):
-            if self.opts.get('ssh_key_deploy'):
-                target = self.targets[host]
-                if 'passwd' in target:
-                    self._key_deploy_run(host, target, False)
+        if not isinstance(ret[host], dict) or self.opts.get('ssh_key_deploy'):
+            target = self.targets[host]
+            if 'passwd' in target or self.opts['ssh_passwd']:
+                self._key_deploy_run(host, target, False)
             return ret
         if ret[host].get('stderr', '').count('Permission denied'):
             target = self.targets[host]
@@ -427,6 +433,9 @@ class SSH(object):
                     running.pop(host)
             if len(rets) >= len(self.targets):
                 break
+            # Sleep when limit or all threads started
+            if len(running) >= self.opts.get('ssh_max_procs', 25) or len(self.targets) >= len(running):
+                time.sleep(0.1)
 
     def run_iter(self, mine=False):
         '''
@@ -464,7 +473,7 @@ class SSH(object):
 
         for ret in self.handle_ssh(mine=mine):
             host = next(six.iterkeys(ret))
-            self.cache_job(jid, host, ret[host])
+            self.cache_job(jid, host, ret[host], fun)
             if self.event:
                 self.event.fire_event(
                         ret,
@@ -473,13 +482,14 @@ class SSH(object):
                             'job'))
             yield ret
 
-    def cache_job(self, jid, id_, ret):
+    def cache_job(self, jid, id_, ret, fun):
         '''
         Cache the job information
         '''
         self.returners['{0}.returner'.format(self.opts['master_job_cache'])]({'jid': jid,
-                                                                                      'id': id_,
-                                                                                      'return': ret})
+                                                                              'id': id_,
+                                                                              'return': ret,
+                                                                              'fun': fun})
 
     def run(self):
         '''
@@ -508,7 +518,10 @@ class SSH(object):
             }
 
         # save load to the master job cache
-        self.returners['{0}.save_load'.format(self.opts['master_job_cache'])](jid, job_load)
+        try:
+            self.returners['{0}.save_load'.format(self.opts['master_job_cache'])](jid, job_load)
+        except Exception as exc:
+            log.error('Could not save load with returner {0}: {1}'.format(self.opts['master_job_cache'], exc))
 
         if self.opts.get('verbose'):
             msg = 'Executing job with jid {0}'.format(jid)
@@ -517,9 +530,14 @@ class SSH(object):
             print('')
         sret = {}
         outputter = self.opts.get('output', 'nested')
+        final_exit = 0
         for ret in self.handle_ssh():
             host = next(six.iterkeys(ret))
-            self.cache_job(jid, host, ret[host])
+            host_ret = ret[host].get('retcode', 0)
+            if host_ret != 0:
+                final_exit = 1
+
+            self.cache_job(jid, host, ret[host], fun)
             ret = self.key_deploy(host, ret)
             if not isinstance(ret[host], dict):
                 p_data = {host: ret[host]}
@@ -546,6 +564,8 @@ class SSH(object):
                     sret,
                     outputter,
                     self.opts)
+        if final_exit:
+            sys.exit(salt.defaults.exitcodes.EX_AGGREGATE)
 
 
 class Single(object):
@@ -573,6 +593,8 @@ class Single(object):
             fsclient=None,
             thin=None,
             mine=False,
+            minion_opts=None,
+            identities_only=False,
             **kwargs):
         # Get mine setting and mine_functions if defined in kwargs (from roster)
         self.mine = mine
@@ -618,13 +640,17 @@ class Single(object):
                 'timeout': timeout,
                 'sudo': sudo,
                 'tty': tty,
-                'mods': self.mods}
-        self.minion_config = yaml.dump(
-                {
+                'mods': self.mods,
+                'identities_only': identities_only}
+        self.minion_opts = opts.get('ssh_minion_opts', {})
+        if minion_opts is not None:
+            self.minion_opts.update(minion_opts)
+        self.minion_opts.update({
                     'root_dir': os.path.join(self.thin_dir, 'running_data'),
                     'id': self.id,
                     'sock_dir': '/',
-                }, width=1000).strip()
+                })
+        self.minion_config = yaml.dump(self.minion_opts)
         self.target = kwargs
         self.target.update(args)
         self.serial = salt.payload.Serial(opts)
@@ -693,7 +719,7 @@ class Single(object):
             stdout, stderr, retcode = self.shell.exec_cmd(cmd_str)
 
         elif self.fun in self.wfuncs or self.mine:
-            stdout = self.run_wfunc()
+            stdout, retcode = self.run_wfunc()
 
         else:
             stdout, stderr, retcode = self.cmd_block()
@@ -737,6 +763,7 @@ class Single(object):
                 self.opts,
                 self.id,
                 fsclient=self.fsclient,
+                minion_opts=self.minion_opts,
                 **self.target)
             opts_pkg = pre_wrapper['test.opts_pkg']()
             opts_pkg['file_roots'] = self.opts['file_roots']
@@ -751,11 +778,12 @@ class Single(object):
                 opts_pkg['_caller_cachedir'] = self.opts['cachedir']
             # Use the ID defined in the roster file
             opts_pkg['id'] = self.id
+            retcode = opts_pkg['retcode']
 
             if '_error' in opts_pkg:
                 # Refresh failed
                 ret = json.dumps({'local': opts_pkg})
-                return ret
+                return ret, retcode
 
             pillar = salt.pillar.Pillar(
                     opts_pkg,
@@ -794,6 +822,7 @@ class Single(object):
             opts,
             self.id,
             fsclient=self.fsclient,
+            minion_opts=self.minion_opts,
             **self.target)
         self.wfuncs = salt.loader.ssh_wrapper(opts, wrapper, self.context)
         wrapper.wfuncs = self.wfuncs
@@ -832,7 +861,7 @@ class Single(object):
             ret = json.dumps({'local': result['local']})
         else:
             ret = json.dumps({'local': {'return': result}})
-        return ret
+        return ret, retcode
 
     def _cmd_str(self):
         '''
@@ -851,7 +880,10 @@ class Single(object):
             debug = '1'
         arg_str = '''
 OPTIONS = OBJ()
-OPTIONS.config = '{0}'
+OPTIONS.config = \
+"""
+{0}
+"""
 OPTIONS.delimiter = '{1}'
 OPTIONS.saltdir = '{2}'
 OPTIONS.checksum = '{3}'
@@ -923,20 +955,21 @@ ARGS = {9}\n'''.format(self.minion_config,
     def cmd_block(self, is_retry=False):
         '''
         Prepare the pre-check command to send to the subsystem
-        '''
-        # 1. execute SHIM + command
-        # 2. check if SHIM returns a master request or if it completed
-        # 3. handle any master request
-        # 4. re-execute SHIM + command
-        # 5. split SHIM results from command results
-        # 6. return command results
 
+        1. execute SHIM + command
+        2. check if SHIM returns a master request or if it completed
+        3. handle any master request
+        4. re-execute SHIM + command
+        5. split SHIM results from command results
+        6. return command results
+        '''
+        self.argv = _convert_args(self.argv)
         log.debug('Performing shimmed, blocking command as follows:\n{0}'.format(' '.join(self.argv)))
         cmd_str = self._cmd_str()
         stdout, stderr, retcode = self.shim_cmd(cmd_str)
 
-        log.debug('STDOUT {1}\n{0}'.format(stdout, self.target['host']))
-        log.debug('STDERR {1}\n{0}'.format(stderr, self.target['host']))
+        log.trace('STDOUT {1}\n{0}'.format(stdout, self.target['host']))
+        log.trace('STDERR {1}\n{0}'.format(stderr, self.target['host']))
         log.debug('RETCODE {1}: {0}'.format(retcode, self.target['host']))
 
         error = self.categorize_shim_errors(stdout, stderr, retcode)
@@ -1147,7 +1180,7 @@ def mod_data(fsclient):
             for fn_ in sorted(files):
                 if fn_.startswith(pref):
                     if fn_.endswith(('.py', '.so', '.pyx')):
-                        full = 'salt://{0}'.format(fn_)
+                        full = salt.utils.url.create(fn_)
                         mod_path = fsclient.cache_file(full, env)
                         if not os.path.isfile(mod_path):
                             continue
@@ -1192,6 +1225,23 @@ def ssh_version():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE).communicate()
     try:
-        return ret[1].split(',')[0].split('_')[1]
+        return ret[1].split(b',')[0].split(b'_')[1]
     except IndexError:
         return '2.0'
+
+
+def _convert_args(args):
+    '''
+    Take a list of args, and convert any dicts inside the list to keyword
+    args in the form of `key=value`, ready to be passed to salt-ssh
+    '''
+    converted = []
+    for arg in args:
+        if isinstance(arg, dict):
+            for key in list(arg.keys()):
+                if key == '__kwarg__':
+                    continue
+                converted.append('{0}={1}'.format(key, arg[key]))
+        else:
+            converted.append(arg)
+    return converted

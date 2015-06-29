@@ -6,6 +6,8 @@ Manage IPMI devices over LAN
 The following configuration defaults can be defined in the
 minion, master config or pillar:
 
+.. code-block:: yaml
+
     ipmi.config:
         api_host: 127.0.0.1
         api_user: admin
@@ -23,6 +25,7 @@ Every call can override the config defaults:
             - api_host: myipmi.hostname.com
             - api_user: root
             - api_pass: apassword
+            - api_kg: None
 
     ensure myipmi system is powered on:
         ipmi.power:
@@ -58,10 +61,11 @@ def boot_device(name='default', **kwargs):
         * default -- remove any IPMI directed boot device request
 
     kwargs
-        api_host=localhost
-        api_user=admin
-        api_pass=
-        api_port=623
+        - api_host=localhost
+        - api_user=admin
+        - api_pass=
+        - api_port=623
+        - api_kg=None
     '''
     ret = {'name': name, 'result': False, 'comment': '', 'changes': {}}
     org = __salt__['ipmi.get_bootdev'](**kwargs)
@@ -103,10 +107,11 @@ def power(name='power_on', wait=300, **kwargs):
         (defaults to 300 seconds)
 
     kwargs
-        api_host=localhost
-        api_user=admin
-        api_pass=
-        api_port=623
+        - api_host=localhost
+        - api_user=admin
+        - api_pass=
+        - api_port=623
+        - api_kg=None
     '''
     ret = {'name': name, 'result': False, 'comment': '', 'changes': {}}
     org = __salt__['ipmi.get_power'](**kwargs)
@@ -158,8 +163,10 @@ def user_present(name, uid, password, channel=14, callback=False,
 
     callback
         User Restricted to Callback
+
         False = User Privilege Limit is determined by the User Privilege Limit
             parameter privilege_level, for both callback and non-callback connections.
+
         True  = User Privilege Limit is determined by the privilege_level
             parameter for callback connections, but is restricted to Callback
             level for non-callback connections. Thus, a user can only initiate
@@ -176,13 +183,13 @@ def user_present(name, uid, password, channel=14, callback=False,
         enabled/disabled via the serial/modem configuration parameters.
 
     ipmi_msg
-        User IPMI Messaginge
+        User IPMI Messaging
         True/False
         user name and password information will be used for IPMI
         Messaging. In this case, 'IPMI Messaging' refers to the ability to
         execute generic IPMI commands that are not associated with a
         particular payload type. For example, if IPMI Messaging is disabled for
-        a user, but that user is enabled for activatallow_authing the SOL
+        a user, but that user is enabled for activating the SOL
         payload type, then IPMI commands associated with SOL and session
         management, such as Get SOL Configuration Parameters and Close Session
         are available, but generic IPMI commands such as Get SEL Time are
@@ -198,10 +205,11 @@ def user_present(name, uid, password, channel=14, callback=False,
         * no_access
 
     kwargs
-        api_host=localhost
-        api_user=admin
-        api_pass=
-        api_port=623
+        - api_host=localhost
+        - api_user=admin
+        - api_pass=
+        - api_port=623
+        - api_kg=None
     '''
     ret = {'name': name, 'result': False, 'comment': '', 'changes': {}}
     org_user = __salt__['ipmi.get_user'](uid=uid, channel=channel, **kwargs)
@@ -258,10 +266,11 @@ def user_absent(name, channel=14, **kwargs):
         channel to remove user access from defaults to 14 for auto.
 
     kwargs
-        api_host=localhost
-        api_user=admin
-        api_pass=
-        api_port=623
+        - api_host=localhost
+        - api_user=admin
+        - api_pass=
+        - api_port=623
+        - api_kg=None
     '''
     ret = {'name': name, 'result': False, 'comment': '', 'changes': {}}
     user_id_list = __salt__['ipmi.get_name_uids'](name, channel, **kwargs)

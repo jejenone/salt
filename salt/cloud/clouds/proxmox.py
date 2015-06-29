@@ -18,7 +18,7 @@ Set up the cloud configuration at ``/etc/salt/cloud.providers`` or
       user: myuser@pam or myuser@pve
       password: mypassword
       url: hypervisor.domain.tld
-      provider: proxmox
+      driver: proxmox
 
 :maintainer: Frank Klaassen <frank@cloudright.nl>
 :maturity: new
@@ -112,7 +112,7 @@ def _authenticate():
     full_url = 'https://{0}:8006/api2/json/access/ticket'.format(url)
 
     returned_data = requests.post(
-        full_url, verify=False, data=connect_data).json()
+        full_url, verify=True, data=connect_data).json()
 
     ticket = {'PVEAuthCookie': returned_data['data']['ticket']}
     csrf = str(returned_data['data']['CSRFPreventionToken'])
@@ -136,24 +136,24 @@ def query(conn_type, option, post_data=None):
 
     if conn_type == 'post':
         httpheaders['CSRFPreventionToken'] = csrf
-        response = requests.post(full_url, verify=False,
+        response = requests.post(full_url, verify=True,
                                  data=post_data,
                                  cookies=ticket,
                                  headers=httpheaders)
     elif conn_type == 'put':
         httpheaders['CSRFPreventionToken'] = csrf
-        response = requests.put(full_url, verify=False,
+        response = requests.put(full_url, verify=True,
                                 data=post_data,
                                 cookies=ticket,
                                 headers=httpheaders)
     elif conn_type == 'delete':
         httpheaders['CSRFPreventionToken'] = csrf
-        response = requests.delete(full_url, verify=False,
+        response = requests.delete(full_url, verify=True,
                                    data=post_data,
                                    cookies=ticket,
                                    headers=httpheaders)
     elif conn_type == 'get':
-        response = requests.get(full_url, verify=False,
+        response = requests.get(full_url, verify=True,
                                 cookies=ticket)
 
     response.raise_for_status()
@@ -480,6 +480,17 @@ def create(vm_):
 
         salt-cloud -p proxmox-ubuntu vmhostname
     '''
+    # Check for required profile parameters before sending any API calls.
+    if config.is_profile_configured(__opts__,
+                                    __active_provider_name__ or 'proxmox',
+                                    vm_['profile']) is False:
+        return False
+
+    # Since using "provider: <provider-engine>" is deprecated, alias provider
+    # to use driver: "driver: <provider-engine>"
+    if 'provider' in vm_:
+        vm_['driver'] = vm_.pop('provider')
+
     ret = {}
 
     salt.utils.cloud.fire_event(
@@ -489,7 +500,7 @@ def create(vm_):
         {
             'name': vm_['name'],
             'profile': vm_['profile'],
-            'provider': vm_['provider'],
+            'provider': vm_['driver'],
         },
         transport=__opts__['transport']
     )
@@ -675,7 +686,7 @@ def create(vm_):
         {
             'name': vm_['name'],
             'profile': vm_['profile'],
-            'provider': vm_['provider'],
+            'provider': vm_['driver'],
         },
     )
 
@@ -849,7 +860,8 @@ def destroy(name, call=None):
     vmobj = _getVmByName(name)
     if vmobj is not None:
         # stop the vm
-        stop(name, vmobj['vmid'], 'action')
+        if get_vm_status(vmid=vmobj['vmid'])['status'] != 'stopped':
+            stop(name, vmobj['vmid'], 'action')
 
         # wait until stopped
         if not wait_for_state(vmobj['vmid'], 'stopped'):

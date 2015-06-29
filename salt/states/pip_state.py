@@ -235,7 +235,8 @@ def installed(name,
               allow_unverified=None,
               process_dependency_links=False,
               env_vars=None,
-              use_vt=False):
+              use_vt=False,
+              trusted_host=None):
     '''
     Make sure the package is installed
 
@@ -383,6 +384,10 @@ def installed(name,
 
     use_vt
         Use VT terminal emulation (see ouptut while installing)
+
+    trusted_host
+        Mark this host as trusted, even though it does not have valid or any
+        HTTPS.
 
     Example:
 
@@ -663,7 +668,8 @@ def installed(name,
         process_dependency_links=process_dependency_links,
         saltenv=__env__,
         env_vars=env_vars,
-        use_vt=use_vt
+        use_vt=use_vt,
+        trusted_host=trusted_host
     )
 
     if pip_install_call and (pip_install_call.get('retcode', 1) == 0):
@@ -737,7 +743,7 @@ def installed(name,
             comments = []
             if requirements:
                 comments.append('Unable to process requirements file '
-                                '{0}.'.format(requirements))
+                                '"{0}".'.format(requirements))
             if editable:
                 comments.append('Unable to install from VCS checkout'
                                 '{0}.'.format(editable))
@@ -820,7 +826,7 @@ def uptodate(name,
              cwd=None,
              use_vt=False):
     '''
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     Verify that the system is completely up to date.
 

@@ -3,11 +3,6 @@
 OpenStack Nova Cloud Module
 ===========================
 
-PLEASE NOTE: This module is currently in early development, and considered to
-be experimental and unstable. It is not recommended for production use. Unless
-you are actively developing code in this module, you should use the OpenStack
-module instead.
-
 OpenStack is an open source project that is in use by a number a cloud
 providers, each of which have their own ways of using it.
 
@@ -50,7 +45,7 @@ examples could be set up in the cloud configuration at
 
       ssh_key_name: mykey
 
-      provider: nova
+      driver: nova
       userdata_file: /tmp/userdata.txt
 
 For local installations that only use private IP address ranges, the
@@ -72,7 +67,7 @@ accept them
       user: myusername
       password: mypassword
       tenant: <userid>
-      provider: nova
+      driver: nova
 
     my-api:
       identity_url: 'https://identity.api.rackspacecloud.com/v2.0/'
@@ -81,7 +76,7 @@ accept them
       api_key: <api_key>
       os_auth_plugin: rackspace
       tenant: <userid>
-      provider: nova
+      driver: nova
       networks:
         - net-id: 47a38ff2-fe21-4800-8604-42bd1848e743
         - net-id: 00000000-0000-0000-0000-000000000000
@@ -103,6 +98,7 @@ import os
 import logging
 import socket
 import pprint
+import yaml
 
 # Import generic libcloud functions
 from salt.cloud.libcloudfuncs import *   # pylint: disable=W0614,W0401
@@ -148,10 +144,6 @@ except ImportError:
 log = logging.getLogger(__name__)
 request_log = logging.getLogger('requests')
 
-# namespace libcloudfuncs
-get_salt_interface = namespaced_function(get_salt_interface, globals())
-
-
 # Some of the libcloud functions need to be in the same namespace as the
 # functions defined in the module, so we create new function objects inside
 # this module namespace
@@ -159,7 +151,7 @@ script = namespaced_function(script, globals())
 reboot = namespaced_function(reboot, globals())
 
 
-# Only load in this module is the OPENSTACK configurations are in place
+# Only load in this module if the Nova configurations are in place
 def __virtual__():
     '''
     Check for Nova configurations
@@ -538,6 +530,12 @@ def create(vm_):
     '''
     Create a single VM from a data dict
     '''
+    # Check for required profile parameters before sending any API calls.
+    if config.is_profile_configured(__opts__,
+                                    __active_provider_name__ or 'nova',
+                                    vm_['profile']) is False:
+        return False
+
     deploy = config.get_cloud_config_value('deploy', vm_, __opts__)
     key_filename = config.get_cloud_config_value(
         'ssh_key_file', vm_, __opts__, search_global=False, default=None
@@ -551,6 +549,11 @@ def create(vm_):
 
     vm_['key_filename'] = key_filename
 
+    # Since using "provider: <provider-engine>" is deprecated, alias provider
+    # to use driver: "driver: <provider-engine>"
+    if 'provider' in vm_:
+        vm_['driver'] = vm_.pop('provider')
+
     salt.utils.cloud.fire_event(
         'event',
         'starting create',
@@ -558,7 +561,7 @@ def create(vm_):
         {
             'name': vm_['name'],
             'profile': vm_['profile'],
-            'provider': vm_['provider'],
+            'provider': vm_['driver'],
         },
         transport=__opts__['transport']
     )
@@ -722,10 +725,10 @@ def create(vm_):
         ip_address = preferred_ip(vm_, data.public_ips)
     log.debug('Using IP address {0}'.format(ip_address))
 
-    if get_salt_interface(vm_) == 'private_ips':
+    if salt.utils.cloud.get_salt_interface(vm_, __opts__) == 'private_ips':
         salt_ip_address = preferred_ip(vm_, data.private_ips)
         log.info('Salt interface set to: {0}'.format(salt_ip_address))
-    elif rackconnect(vm_) is True and get_salt_interface(vm_) != 'private_ips':
+    elif rackconnect(vm_) is True and salt.utils.cloud.get_salt_interface(vm_, __opts__) != 'private_ips':
         salt_ip_address = data.public_ips
     else:
         salt_ip_address = preferred_ip(vm_, data.public_ips)
@@ -758,7 +761,7 @@ def create(vm_):
         {
             'name': vm_['name'],
             'profile': vm_['profile'],
-            'provider': vm_['provider'],
+            'provider': vm_['driver'],
         },
         transport=__opts__['transport']
     )
@@ -799,14 +802,35 @@ def list_nodes(call=None, **kwargs):
         return {}
     for server in server_list:
         server_tmp = conn.server_show(server_list[server]['id'])[server]
+
+        private = []
+        public = []
+        if 'addresses' not in server_tmp:
+            server_tmp['addresses'] = {}
+        for network in server_tmp['addresses'].keys():
+            for address in server_tmp['addresses'][network]:
+                if salt.utils.cloud.is_public_ip(address.get('addr', '')):
+                    public.append(address['addr'])
+                elif ':' in address['addr']:
+                    public.append(address['addr'])
+                elif '.' in address['addr']:
+                    private.append(address['addr'])
+
+        if server_tmp['accessIPv4']:
+            if salt.utils.cloud.is_public_ip(server_tmp['accessIPv4']):
+                public.append(server_tmp['accessIPv4'])
+            else:
+                private.append(server_tmp['accessIPv4'])
+        if server_tmp['accessIPv6']:
+            public.append(server_tmp['accessIPv6'])
+
         ret[server] = {
             'id': server_tmp['id'],
             'image': server_tmp['image']['id'],
             'size': server_tmp['flavor']['id'],
             'state': server_tmp['state'],
-            'private_ips': [addrs['addr'] for addrs in
-                            server_tmp['addresses'].get('private', [])],
-            'public_ips': [server_tmp['accessIPv4'], server_tmp['accessIPv6']],
+            'private_ips': public,
+            'public_ips': private,
         }
     return ret
 
@@ -863,6 +887,10 @@ def volume_create(name, size=100, snapshot=None, voltype=None, **kwargs):
     return conn.volume_create(**create_kwargs)
 
 
+# Command parity with EC2 and Azure
+create_volume = volume_create
+
+
 def volume_delete(name, **kwargs):
     '''
     Delete block storage device
@@ -893,6 +921,73 @@ def volume_attach(name, server_name, device='/dev/xvdb', **kwargs):
         device,
         timeout=300
     )
+
+
+# Command parity with EC2 and Azure
+attach_volume = volume_attach
+
+
+def volume_create_attach(name, call=None, **kwargs):
+    '''
+    Create and attach volumes to created node
+    '''
+    if call == 'function':
+        raise SaltCloudSystemExit(
+            'The create_attach_volumes action must be called with '
+            '-a or --action.'
+        )
+
+    if type(kwargs['volumes']) is str:
+        volumes = yaml.safe_load(kwargs['volumes'])
+    else:
+        volumes = kwargs['volumes']
+
+    ret = []
+    for volume in volumes:
+        created = False
+
+        volume_dict = {
+            'name': volume['name'],
+        }
+        if 'volume_id' in volume:
+            volume_dict['volume_id'] = volume['volume_id']
+        elif 'snapshot' in volume:
+            volume_dict['snapshot'] = volume['snapshot']
+        else:
+            volume_dict['size'] = volume['size']
+
+            if 'type' in volume:
+                volume_dict['type'] = volume['type']
+            if 'iops' in volume:
+                volume_dict['iops'] = volume['iops']
+
+        if 'id' not in volume_dict:
+            created_volume = create_volume(**volume_dict)
+            created = True
+            volume_dict.update(created_volume)
+
+        attach = attach_volume(
+            name=volume['name'],
+            server_name=name,
+            device=volume.get('device', None),
+            call='action'
+        )
+
+        if attach:
+            msg = (
+                '{0} attached to {1} (aka {2})'.format(
+                    volume_dict['id'],
+                    name,
+                    volume_dict['name'],
+                )
+            )
+            log.info(msg)
+            ret.append(msg)
+    return ret
+
+
+# Command parity with EC2 and Azure
+create_attach_volumes = volume_create_attach
 
 
 def volume_list(**kwargs):

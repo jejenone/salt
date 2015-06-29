@@ -3,10 +3,9 @@
 Manage a GPG keychains, add keys, create keys, retrieve keys
 from keyservers.  Sign, encrypt and sign & encrypt text and files.
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 
 .. note::
-
     The ``python-gnupg`` library and gpg binary are
     required to be installed.
 
@@ -306,9 +305,11 @@ def create_key(key_type='RSA',
     .. note::
 
         GPG key generation requires *a lot* of entropy and randomness.
-        Difficult to do over a remote connection, consider having another
-        process available which is generating randomness for the machine.
-        Also especially difficult on virtual machines, consider the rpg-tools
+        Difficult to do over a remote connection, consider having
+        another process available which is generating randomness for
+        the machine.  Also especially difficult on virtual machines,
+        consider the `rng-tools
+        <http://www.gnu.org/software/hurd/user/tlecarrour/rng-tools.html>`_
         package.
 
         The create_key process takes awhile so increasing the timeout
@@ -620,9 +621,7 @@ def import_key(user=None,
     .. code-block:: bash
 
         salt '*' gpg.import_key text='-----BEGIN PGP PUBLIC KEY BLOCK-----\n ... -----END PGP PUBLIC KEY BLOCK-----'
-
         salt '*' gpg.import_key filename='/path/to/public-key-file'
-
     '''
     ret = {
            'res': True,
@@ -643,17 +642,18 @@ def import_key(user=None,
             raise SaltInvocationError('filename does not exist.')
 
     import_result = gpg.import_keys(text)
+    counts = import_result.counts
     log.debug('imported_data {0}'.format(list(import_result.__dict__.keys())))
-    log.debug('imported_data {0}'.format(import_result.counts))
+    log.debug('imported_data {0}'.format(counts))
 
-    if import_result.imported or import_result.imported_rsa:
+    if counts.get('imported') or counts.get('imported_rsa'):
         ret['message'] = 'Successfully imported key(s).'
-    elif import_result.unchanged:
+    elif counts.get('unchanged'):
         ret['message'] = 'Key(s) already exist in keychain.'
-    elif import_result.not_imported:
+    elif counts.get('not_imported'):
         ret['res'] = False
         ret['message'] = 'Unable to import key.'
-    elif not import_result.count:
+    elif not counts.get('count'):
         ret['res'] = False
         ret['message'] = 'Unable to import key.'
 
@@ -777,7 +777,6 @@ def trust_key(keyid=None,
         salt '*' gpg.trust_key keyid='3FAD9F1E' trust_level='marginally'
         salt '*' gpg.trust_key fingerprint='53C96788253E58416D20BCD352952C84C3252192' trust_level='not_trusted'
         salt '*' gpg.trust_key keys=3FAD9F1E trust_level='ultimately' user='username'
-
     '''
     ret = {
            'res': True,
@@ -979,7 +978,8 @@ def encrypt(user=None,
             output=None,
             sign=None,
             use_passphrase=False,
-            gnupghome=None):
+            gnupghome=None,
+            bare=False):
     '''
     Encrypt a message or file
 
@@ -1008,6 +1008,10 @@ def encrypt(user=None,
 
     gnupghome
         Specify the location where GPG related files are stored.
+
+    bare
+        If True, return the (armored) encrypted block as a string without the
+        standard comment/res dict
 
     CLI Example:
 
@@ -1054,13 +1058,19 @@ def encrypt(user=None,
         raise SaltInvocationError('filename or text must be passed.')
 
     if result.ok:
-        if output:
-            ret['comment'] = 'Encrypted data has been written to {0}'.format(output)
+        if not bare:
+            if output:
+                ret['comment'] = 'Encrypted data has been written to {0}'.format(output)
+            else:
+                ret['comment'] = result.data
         else:
-            ret['comment'] = result.data
+            ret = result.data
     else:
-        ret['res'] = False
-        ret['comment'] = '{0}.\nPlease check the salt-minion log.'.format(result.status)
+        if not bare:
+            ret['res'] = False
+            ret['comment'] = '{0}.\nPlease check the salt-minion log.'.format(result.status)
+        else:
+            ret = False
         log.error(result.stderr)
     return ret
 
@@ -1070,7 +1080,8 @@ def decrypt(user=None,
             filename=None,
             output=None,
             use_passphrase=False,
-            gnupghome=None):
+            gnupghome=None,
+            bare=False):
     '''
     Decrypt a message or file
 
@@ -1092,6 +1103,10 @@ def decrypt(user=None,
 
     gnupghome
         Specify the location where GPG related files are stored.
+
+    bare
+        If True, return the (armored) decrypted block as a string without the
+        standard comment/res dict
 
     CLI Example:
 
@@ -1128,12 +1143,20 @@ def decrypt(user=None,
         raise SaltInvocationError('filename or text must be passed.')
 
     if result.ok:
-        if output:
-            ret['comment'] = 'Decrypted data has been written to {0}'.format(output)
+        if not bare:
+            if output:
+                ret['comment'] = 'Decrypted data has been written to {0}'.format(output)
+            else:
+                ret['comment'] = result.data
         else:
-            ret['comment'] = result.data
+            ret = result.data
     else:
-        ret['res'] = False
-        ret['comment'] = '{0}.\nPlease check the salt-minion log.'.format(result.status)
+        if not bare:
+            ret['res'] = False
+            ret['comment'] = '{0}.\nPlease check the salt-minion log.'.format(result.status)
+        else:
+            ret = False
+
         log.error(result.stderr)
+
     return ret

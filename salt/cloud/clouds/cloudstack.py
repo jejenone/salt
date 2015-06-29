@@ -18,7 +18,7 @@ Use of this module requires the ``apikey``, ``secretkey``, ``host`` and
       secretkey: <your secret key >
       host: localhost
       path: /client/api
-      provider: cloudstack
+      driver: cloudstack
 
 '''
 # pylint: disable=invalid-name,function-redefined
@@ -220,6 +220,12 @@ def create(vm_):
     '''
     Create a single VM from a data dict
     '''
+    # Check for required profile parameters before sending any API calls.
+    if config.is_profile_configured(__opts__,
+                                    __active_provider_name__ or 'cloudstack',
+                                    vm_['profile']) is False:
+        return False
+
     salt.utils.cloud.fire_event(
         'event',
         'starting create',
@@ -265,6 +271,12 @@ def create(vm_):
         transport=__opts__['transport']
     )
 
+    displayname = cloudstack_displayname(vm_)
+    if displayname:
+        kwargs['ex_displayname'] = displayname
+    else:
+        kwargs['ex_displayname'] = kwargs['name']
+
     volumes = {}
     ex_blockdevicemappings = block_device_mappings(vm_)
     if ex_blockdevicemappings:
@@ -289,7 +301,7 @@ def create(vm_):
                     'Error creating volume {0} on CLOUDSTACK\n\n'
                     'The following exception was thrown by libcloud when trying to '
                     'requesting a volume: \n{1}'.format(
-                        ex_blockdevicemapping['VirtualName'], exc.message
+                        ex_blockdevicemapping['VirtualName'], exc
                     ),
                     # Show the traceback if the debug logging level is enabled
                     exc_info_on_loglevel=logging.DEBUG
@@ -319,7 +331,7 @@ def create(vm_):
                 'Error attaching volume {0} on CLOUDSTACK\n\n'
                 'The following exception was thrown by libcloud when trying to '
                 'attach a volume: \n{1}'.format(
-                    ex_blockdevicemapping.get('VirtualName', 'UNKNOWN'), exc.message
+                    ex_blockdevicemapping.get('VirtualName', 'UNKNOWN'), exc
                 ),
                 # Show the traceback if the debug logging level is enabled
                 exc_info=log.isEnabledFor(logging.DEBUG)
@@ -560,4 +572,16 @@ def block_device_mappings(vm_):
     '''
     return config.get_cloud_config_value(
         'block_device_mappings', vm_, __opts__, search_global=True
+    )
+
+
+def cloudstack_displayname(vm_):
+    '''
+    Return display name of VM:
+
+    ::
+        "minion1"
+    '''
+    return config.get_cloud_config_value(
+        'cloudstack_displayname', vm_, __opts__, search_global=True
     )

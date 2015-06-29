@@ -9,7 +9,7 @@ This returner will send data from the minions to a MongoDB server. To
 configure the settings for your MongoDB server, add the following lines
 to the minion config files:
 
-.. cod-block:: yaml
+.. code-block:: yaml
 
     mongo.db: <database name>
     mongo.host: <server ip address>
@@ -19,6 +19,8 @@ to the minion config files:
 
 You can also ask for indexes creation on the most common used fields, which
 should greatly improve performance. Indexes are not created by default.
+
+.. code-block:: yaml
 
     mongo.indexes: true
 
@@ -46,7 +48,7 @@ To use the mongo returner, append '--return mongo' to the salt command.
 
 To use the alternative configuration, append '--return_config alternative' to the salt command.
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 
 .. code-block:: bash
 
@@ -62,9 +64,11 @@ import salt.utils.jid
 import salt.returners
 import salt.ext.six as six
 
+
 # Import third party libs
 try:
     import pymongo
+    version = pymongo.version
     HAS_PYMONGO = True
 except ImportError:
     HAS_PYMONGO = False
@@ -125,7 +129,10 @@ def _get_conn(ret):
     password = _options.get('password')
     indexes = _options.get('indexes', False)
 
-    conn = pymongo.Connection(host, port)
+    if float(version) > 2.3:
+        conn = pymongo.MongoClient(host, port)
+    else:
+        conn = pymongo.Connection(host, port)
     mdb = conn[db_]
 
     if user and password:

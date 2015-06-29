@@ -6,7 +6,7 @@ Azure Cloud Module
 The Azure cloud module is used to control access to Microsoft Azure
 
 :depends:
-    * `Microsoft Azure SDK for Python <https://pypi.python.org/pypi/azure/0.9.0>`_
+    * `Microsoft Azure SDK for Python <https://pypi.python.org/pypi/azure/0.9.0>`_ >= 0.11.1
     * python-requests, for Python < 2.7.9
 :configuration:
     Required provider parameters:
@@ -31,7 +31,7 @@ Example ``/etc/salt/cloud.providers`` or
 .. code-block:: yaml
 
     my-azure-config:
-      provider: azure
+      driver: azure
       subscription_id: 3287abc8-f98a-c678-3bde-326766fd3617
       certificate_path: /etc/salt/azure.pem
       management_host: management.core.windows.net
@@ -78,7 +78,7 @@ log = logging.getLogger(__name__)
 # Only load in this module if the AZURE configurations are in place
 def __virtual__():
     '''
-    Set up the libcloud functions and check for Azure configurations.
+    Check for Azure configurations.
     '''
     if not HAS_LIBS:
         return False
@@ -214,8 +214,7 @@ def list_nodes(conn=None, call=None):
     nodes = list_nodes_full(conn, call)
     for node in nodes:
         ret[node] = {}
-        for prop in ('id', 'image', 'size', 'state', 'private_ips',
-                     'public_ips'):
+        for prop in ('id', 'image', 'size', 'state', 'private_ips', 'public_ips'):
             ret[node][prop] = nodes[node][prop]
     return ret
 
@@ -400,6 +399,17 @@ def create(vm_):
     '''
     Create a single VM from a data dict
     '''
+    # Check for required profile parameters before sending any API calls.
+    if config.is_profile_configured(__opts__,
+                                    __active_provider_name__ or 'azure',
+                                    vm_['profile']) is False:
+        return False
+
+    # Since using "provider: <provider-engine>" is deprecated, alias provider
+    # to use driver: "driver: <provider-engine>"
+    if 'provider' in vm_:
+        vm_['driver'] = vm_.pop('provider')
+
     salt.utils.cloud.fire_event(
         'event',
         'starting create',
@@ -407,7 +417,7 @@ def create(vm_):
         {
             'name': vm_['name'],
             'profile': vm_['profile'],
-            'provider': vm_['provider'],
+            'provider': vm_['driver'],
         },
         transport=__opts__['transport']
     )
@@ -487,6 +497,12 @@ def create(vm_):
         'role_size': vm_['size'],
         'network_config': network_config,
     }
+
+    if 'virtual_network_name' in vm_:
+        vm_kwargs['virtual_network_name'] = vm_['virtual_network_name']
+        if 'subnet_name' in vm_:
+            network_config.subnet_names.append(vm_['subnet_name'])
+
     log.debug('vm_kwargs: {0}'.format(vm_kwargs))
 
     event_kwargs = {'service_kwargs': service_kwargs.copy(),
@@ -598,122 +614,11 @@ def create(vm_):
         log.error('Failed to get a value for the hostname.')
         return False
 
-    hostname = hostname.replace('http://', '').replace('/', '')
-
-    ssh_username = config.get_cloud_config_value(
-        'ssh_username', vm_, __opts__, default='root'
-    )
-    ssh_password = config.get_cloud_config_value(
+    vm_['ssh_host'] = hostname.replace('http://', '').replace('/', '')
+    vm_['password'] = config.get_cloud_config_value(
         'ssh_password', vm_, __opts__
     )
-
-    ret = {}
-    if config.get_cloud_config_value('deploy', vm_, __opts__) is True:
-        deploy_script = script(vm_)
-        deploy_kwargs = {
-            'opts': __opts__,
-            'host': hostname,
-            'port': int(ssh_port),
-            'username': ssh_username,
-            'password': ssh_password,
-            'script': deploy_script,
-            'name': vm_['name'],
-            'start_action': __opts__['start_action'],
-            'parallel': __opts__['parallel'],
-            'sock_dir': __opts__['sock_dir'],
-            'conf_file': __opts__['conf_file'],
-            'minion_pem': vm_['priv_key'],
-            'minion_pub': vm_['pub_key'],
-            'keep_tmp': __opts__['keep_tmp'],
-            'preseed_minion_keys': vm_.get('preseed_minion_keys', None),
-            'tmp_dir': config.get_cloud_config_value(
-                'tmp_dir', vm_, __opts__, default='/tmp/.saltcloud'
-            ),
-            'deploy_command': config.get_cloud_config_value(
-                'deploy_command', vm_, __opts__,
-                default='/tmp/.saltcloud/deploy.sh',
-            ),
-            'sudo': config.get_cloud_config_value(
-                'sudo', vm_, __opts__, default=(ssh_username != 'root')
-            ),
-            'sudo_password': config.get_cloud_config_value(
-                'sudo_password', vm_, __opts__, default=None
-            ),
-            'tty': config.get_cloud_config_value(
-                'tty', vm_, __opts__, default=False
-            ),
-            'display_ssh_output': config.get_cloud_config_value(
-                'display_ssh_output', vm_, __opts__, default=True
-            ),
-            'script_args': config.get_cloud_config_value(
-                'script_args', vm_, __opts__
-            ),
-            'script_env': config.get_cloud_config_value(
-                'script_env', vm_, __opts__
-            ),
-            'minion_conf': salt.utils.cloud.minion_config(__opts__, vm_),
-            'has_ssh_agent': False
-        }
-
-        # Deploy salt-master files, if necessary
-        if config.get_cloud_config_value('make_master', vm_, __opts__) is True:
-            deploy_kwargs['make_master'] = True
-            deploy_kwargs['master_pub'] = vm_['master_pub']
-            deploy_kwargs['master_pem'] = vm_['master_pem']
-            master_conf = salt.utils.cloud.master_config(__opts__, vm_)
-            deploy_kwargs['master_conf'] = master_conf
-
-            if master_conf.get('syndic_master', None):
-                deploy_kwargs['make_syndic'] = True
-
-        deploy_kwargs['make_minion'] = config.get_cloud_config_value(
-            'make_minion', vm_, __opts__, default=True
-        )
-
-        # Check for Windows install params
-        win_installer = config.get_cloud_config_value('win_installer', vm_, __opts__)
-        if win_installer:
-            deploy_kwargs['win_installer'] = win_installer
-            minion = salt.utils.cloud.minion_config(__opts__, vm_)
-            deploy_kwargs['master'] = minion['master']
-            deploy_kwargs['username'] = config.get_cloud_config_value(
-                'win_username', vm_, __opts__, default='Administrator'
-            )
-            deploy_kwargs['password'] = config.get_cloud_config_value(
-                'win_password', vm_, __opts__, default=''
-            )
-
-        # Store what was used to the deploy the VM
-        event_kwargs = copy.deepcopy(deploy_kwargs)
-        del event_kwargs['minion_pem']
-        del event_kwargs['minion_pub']
-        del event_kwargs['sudo_password']
-        if 'password' in event_kwargs:
-            del event_kwargs['password']
-        ret['deploy_kwargs'] = event_kwargs
-
-        salt.utils.cloud.fire_event(
-            'event',
-            'executing deploy script',
-            'salt/cloud/{0}/deploying'.format(vm_['name']),
-            {'kwargs': event_kwargs},
-            transport=__opts__['transport']
-        )
-
-        deployed = False
-        if win_installer:
-            deployed = salt.utils.cloud.deploy_windows(**deploy_kwargs)
-        else:
-            deployed = salt.utils.cloud.deploy_script(**deploy_kwargs)
-
-        if deployed:
-            log.info('Salt installed on {0}'.format(vm_['name']))
-        else:
-            log.error(
-                'Failed to start Salt on Cloud VM {0}'.format(
-                    vm_['name']
-                )
-            )
+    ret = salt.utils.cloud.bootstrap(vm_, __opts__)
 
     # Attaching volumes
     volumes = config.get_cloud_config_value(
@@ -760,7 +665,7 @@ def create(vm_):
         {
             'name': vm_['name'],
             'profile': vm_['profile'],
-            'provider': vm_['provider'],
+            'provider': vm_['driver'],
         },
         transport=__opts__['transport']
     )
@@ -777,6 +682,9 @@ def create_attach_volumes(name, kwargs, call=None, wait_to_finish=True):
             'The create_attach_volumes action must be called with '
             '-a or --action.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if isinstance(kwargs['volumes'], str):
         volumes = yaml.safe_load(kwargs['volumes'])
@@ -868,6 +776,9 @@ def create_attach_volumes(name, kwargs, call=None, wait_to_finish=True):
             'The create_attach_volumes action must be called with '
             '-a or --action.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if isinstance(kwargs['volumes'], str):
         volumes = yaml.safe_load(kwargs['volumes'])
@@ -972,7 +883,9 @@ def destroy(name, conn=None, call=None, kwargs=None):
     '''
     Destroy a VM
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -d myminion
         salt-cloud -a destroy myminion service_name=myservice
@@ -1117,7 +1030,9 @@ def get_operation_status(kwargs=None, conn=None, call=None):
 
     Get Operation Status, based on a request ID
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f get_operation_status my-azure id=0123456789abcdef0123456789abcdef
     '''
@@ -1125,6 +1040,9 @@ def get_operation_status(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The show_instance function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'id' not in kwargs:
         raise SaltCloudSystemExit('A request ID must be specified as "id"')
@@ -1153,7 +1071,9 @@ def list_storage(kwargs=None, conn=None, call=None):
 
     List storage accounts associated with the account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_storage my-azure
     '''
@@ -1179,7 +1099,9 @@ def show_storage(kwargs=None, conn=None, call=None):
 
     List storage service properties
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_storage my-azure name=my_storage
     '''
@@ -1190,6 +1112,9 @@ def show_storage(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1210,7 +1135,9 @@ def show_storage_keys(kwargs=None, conn=None, call=None):
 
     Show storage account keys
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_storage_keys my-azure name=my_storage
     '''
@@ -1221,6 +1148,9 @@ def show_storage_keys(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1248,7 +1178,9 @@ def create_storage(kwargs=None, conn=None, call=None):
 
     Create a new storage account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f create_storage my-azure name=my_storage label=my_storage location='West US'
     '''
@@ -1256,6 +1188,9 @@ def create_storage(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The show_storage function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if not conn:
         conn = get_conn()
@@ -1295,7 +1230,9 @@ def update_storage(kwargs=None, conn=None, call=None):
 
     Update a storage account's properties
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f update_storage my-azure name=my_storage label=my_storage
     '''
@@ -1306,6 +1243,9 @@ def update_storage(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1328,7 +1268,9 @@ def regenerate_storage_keys(kwargs=None, conn=None, call=None):
     Regenerate storage account keys. Requires a key_type ("primary" or
     "secondary") to be specified.
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f regenerate_storage_keys my-azure name=my_storage key_type=primary
     '''
@@ -1339,6 +1281,9 @@ def regenerate_storage_keys(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1362,7 +1307,9 @@ def delete_storage(kwargs=None, conn=None, call=None):
 
     Delete a specific storage account
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_storage my-azure name=my_storage
     '''
@@ -1370,6 +1317,9 @@ def delete_storage(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_storage function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1390,7 +1340,9 @@ def list_services(kwargs=None, conn=None, call=None):
 
     List hosted services associated with the account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_services my-azure
     '''
@@ -1416,7 +1368,9 @@ def show_service(kwargs=None, conn=None, call=None):
 
     List hosted service properties
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_service my-azure name=my_service
     '''
@@ -1427,6 +1381,9 @@ def show_service(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1445,7 +1402,9 @@ def create_service(kwargs=None, conn=None, call=None):
 
     Create a new hosted service
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f create_service my-azure name=my_service label=my_service location='West US'
     '''
@@ -1456,6 +1415,9 @@ def create_service(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1487,7 +1449,9 @@ def delete_service(kwargs=None, conn=None, call=None):
 
     Delete a specific service associated with the account
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_service my-azure name=my_service
     '''
@@ -1495,6 +1459,9 @@ def delete_service(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_service function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1515,7 +1482,9 @@ def list_disks(kwargs=None, conn=None, call=None):
 
     List disks associated with the account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_disks my-azure
     '''
@@ -1540,7 +1509,9 @@ def show_disk(kwargs=None, conn=None, call=None):
 
     Return information about a disk
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_disk my-azure name=my_disk
     '''
@@ -1551,6 +1522,9 @@ def show_disk(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1571,7 +1545,9 @@ def cleanup_unattached_disks(kwargs=None, conn=None, call=None):
     *** CAUTION *** This is a destructive function with no undo button, and no
     "Are you sure?" confirmation!
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f cleanup_unattached_disks my-azure name=my_disk
         salt-cloud -f cleanup_unattached_disks my-azure name=my_disk delete_vhd=True
@@ -1580,6 +1556,9 @@ def cleanup_unattached_disks(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_disk function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     disks = list_disks(kwargs=kwargs, conn=conn, call='function')
     for disk in disks:
@@ -1599,7 +1578,9 @@ def delete_disk(kwargs=None, conn=None, call=None):
 
     Delete a specific disk associated with the account
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_disk my-azure name=my_disk
         salt-cloud -f delete_disk my-azure name=my_disk delete_vhd=True
@@ -1608,6 +1589,9 @@ def delete_disk(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_disk function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1628,7 +1612,9 @@ def update_disk(kwargs=None, conn=None, call=None):
 
     Update a disk's properties
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f update_disk my-azure name=my_disk label=my_disk
         salt-cloud -f update_disk my-azure name=my_disk new_name=another_disk
@@ -1640,6 +1626,9 @@ def update_disk(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1662,7 +1651,9 @@ def list_service_certificates(kwargs=None, conn=None, call=None):
 
     List certificates associated with the service
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_service_certificates my-azure name=my_service
     '''
@@ -1670,6 +1661,9 @@ def list_service_certificates(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The list_service_certificates function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A service name must be specified as "name"')
@@ -1690,7 +1684,9 @@ def show_service_certificate(kwargs=None, conn=None, call=None):
 
     Return information about a service certificate
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_service_certificate my-azure name=my_service_certificate \
             thumbalgorithm=sha1 thumbprint=0123456789ABCDEF
@@ -1702,6 +1698,9 @@ def show_service_certificate(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A service name must be specified as "name"')
@@ -1730,7 +1729,9 @@ def add_service_certificate(kwargs=None, conn=None, call=None):
 
     Add a new service certificate
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f add_service_certificate my-azure name=my_service_certificate \
             data='...CERT_DATA...' certificate_format=sha1 password=verybadpass
@@ -1742,6 +1743,9 @@ def add_service_certificate(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1773,7 +1777,9 @@ def delete_service_certificate(kwargs=None, conn=None, call=None):
 
     Delete a specific certificate associated with the service
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_service_certificate my-azure name=my_service_certificate \
             thumbalgorithm=sha1 thumbprint=0123456789ABCDEF
@@ -1782,6 +1788,9 @@ def delete_service_certificate(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_service_certificate function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -1812,7 +1821,9 @@ def list_management_certificates(kwargs=None, conn=None, call=None):
 
     List management certificates associated with the subscription
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_management_certificates my-azure name=my_management
     '''
@@ -1837,7 +1848,9 @@ def show_management_certificate(kwargs=None, conn=None, call=None):
 
     Return information about a management_certificate
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f get_management_certificate my-azure name=my_management_certificate \
             thumbalgorithm=sha1 thumbprint=0123456789ABCDEF
@@ -1849,6 +1862,9 @@ def show_management_certificate(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'thumbprint' not in kwargs:
         raise SaltCloudSystemExit('A thumbprint must be specified as "thumbprint"')
@@ -1867,7 +1883,9 @@ def add_management_certificate(kwargs=None, conn=None, call=None):
 
     Add a new management certificate
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f add_management_certificate my-azure public_key='...PUBKEY...' \
             thumbprint=0123456789ABCDEF data='...CERT_DATA...'
@@ -1879,6 +1897,9 @@ def add_management_certificate(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'public_key' not in kwargs:
         raise SaltCloudSystemExit('A public_key must be specified as "public_key"')
@@ -1906,7 +1927,9 @@ def delete_management_certificate(kwargs=None, conn=None, call=None):
 
     Delete a specific certificate associated with the management
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_management_certificate my-azure name=my_management_certificate \
             thumbalgorithm=sha1 thumbprint=0123456789ABCDEF
@@ -1915,6 +1938,9 @@ def delete_management_certificate(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_management_certificate function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'thumbprint' not in kwargs:
         raise SaltCloudSystemExit('A thumbprint must be specified as "thumbprint"')
@@ -1935,7 +1961,9 @@ def list_virtual_networks(kwargs=None, conn=None, call=None):
 
     List input endpoints associated with the deployment
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_virtual_networks my-azure service=myservice deployment=mydeployment
     '''
@@ -1955,7 +1983,9 @@ def list_input_endpoints(kwargs=None, conn=None, call=None):
 
     List input endpoints associated with the deployment
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_input_endpoints my-azure service=myservice deployment=mydeployment
     '''
@@ -1963,6 +1993,9 @@ def list_input_endpoints(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The list_input_endpoints function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'service' not in kwargs:
         raise SaltCloudSystemExit('A service name must be specified as "service"')
@@ -1994,7 +2027,9 @@ def show_input_endpoint(kwargs=None, conn=None, call=None):
 
     Show an input endpoint associated with the deployment
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_input_endpoint my-azure service=myservice \
             deployment=mydeployment name=SSH
@@ -2003,6 +2038,9 @@ def show_input_endpoint(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The show_input_endpoint function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An endpoint name must be specified as "name"')
@@ -2022,7 +2060,9 @@ def update_input_endpoint(kwargs=None, conn=None, call=None, activity='update'):
     Update an input endpoint associated with the deployment. Please note that
     there may be a delay before the changes show up.
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f update_input_endpoint my-azure service=myservice \
             deployment=mydeployment role=myrole name=HTTP local_port=80 \
@@ -2033,6 +2073,9 @@ def update_input_endpoint(kwargs=None, conn=None, call=None, activity='update'):
         raise SaltCloudSystemExit(
             'The update_input_endpoint function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'service' not in kwargs:
         raise SaltCloudSystemExit('A service name must be specified as "service"')
@@ -2131,7 +2174,9 @@ def add_input_endpoint(kwargs=None, conn=None, call=None):
     Add an input endpoint to the deployment. Please note that
     there may be a delay before the changes show up.
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f add_input_endpoint my-azure service=myservice \
             deployment=mydeployment role=myrole name=HTTP local_port=80 \
@@ -2153,7 +2198,9 @@ def delete_input_endpoint(kwargs=None, conn=None, call=None):
     Delete an input endpoint from the deployment. Please note that
     there may be a delay before the changes show up.
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_input_endpoint my-azure service=myservice \
             deployment=mydeployment role=myrole name=HTTP
@@ -2172,7 +2219,9 @@ def show_deployment(kwargs=None, conn=None, call=None):
 
     Return information about a deployment
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_deployment my-azure name=my_deployment
     '''
@@ -2183,6 +2232,9 @@ def show_deployment(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'service_name' not in kwargs:
         raise SaltCloudSystemExit('A service name must be specified as "service_name"')
@@ -2207,7 +2259,9 @@ def list_affinity_groups(kwargs=None, conn=None, call=None):
 
     List input endpoints associated with the deployment
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_affinity_groups my-azure
     '''
@@ -2232,7 +2286,9 @@ def show_affinity_group(kwargs=None, conn=None, call=None):
 
     Show an affinity group associated with the account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_affinity_group my-azure service=myservice \
             deployment=mydeployment name=SSH
@@ -2244,6 +2300,9 @@ def show_affinity_group(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An affinity group name must be specified as "name"')
@@ -2262,7 +2321,9 @@ def create_affinity_group(kwargs=None, conn=None, call=None):
 
     Create a new affinity group
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f create_affinity_group my-azure name=my_affinity_group
     '''
@@ -2273,6 +2334,9 @@ def create_affinity_group(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -2301,7 +2365,9 @@ def update_affinity_group(kwargs=None, conn=None, call=None):
 
     Update an affinity group's properties
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f update_affinity_group my-azure name=my_group label=my_group
     '''
@@ -2312,6 +2378,9 @@ def update_affinity_group(kwargs=None, conn=None, call=None):
 
     if not conn:
         conn = get_conn()
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -2333,7 +2402,9 @@ def delete_affinity_group(kwargs=None, conn=None, call=None):
 
     Delete a specific affinity group associated with the account
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_affinity_group my-azure name=my_affinity_group
     '''
@@ -2341,6 +2412,9 @@ def delete_affinity_group(kwargs=None, conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_affinity_group function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('A name must be specified as "name"')
@@ -2385,7 +2459,9 @@ def make_blob_url(kwargs=None, storage_conn=None, call=None):
 
     Creates the URL to access a blob
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f make_blob_url my-azure container=mycontainer blob=myblob
 
@@ -2407,6 +2483,9 @@ def make_blob_url(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The make_blob_url function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'container' not in kwargs:
         raise SaltCloudSystemExit('A container name must be specified as "container"')
@@ -2436,7 +2515,9 @@ def list_storage_containers(kwargs=None, storage_conn=None, call=None):
 
     List containers associated with the storage account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_storage_containers my-azure
     '''
@@ -2461,7 +2542,9 @@ def create_storage_container(kwargs=None, storage_conn=None, call=None):
 
     Create a storage container
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f create_storage_container my-azure name=mycontainer
 
@@ -2501,7 +2584,9 @@ def show_storage_container(kwargs=None, storage_conn=None, call=None):
 
     Show a container associated with the storage account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_storage_container my-azure name=myservice
 
@@ -2512,6 +2597,9 @@ def show_storage_container(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The show_storage_container function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An storage container name must be specified as "name"')
@@ -2536,7 +2624,9 @@ def show_storage_container_metadata(kwargs=None, storage_conn=None, call=None):
 
     Show a storage container's metadata
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_storage_container_metadata my-azure name=myservice
 
@@ -2550,6 +2640,9 @@ def show_storage_container_metadata(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The show_storage_container function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An storage container name must be specified as "name"')
@@ -2574,7 +2667,9 @@ def set_storage_container_metadata(kwargs=None, storage_conn=None, call=None):
 
     Set a storage container's metadata
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f set_storage_container my-azure name=mycontainer \
             x_ms_meta_name_values='{"my_name": "my_value"}'
@@ -2592,6 +2687,9 @@ def set_storage_container_metadata(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The create_storage_container function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An storage container name must be specified as "name"')
@@ -2620,7 +2718,9 @@ def show_storage_container_acl(kwargs=None, storage_conn=None, call=None):
 
     Show a storage container's acl
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_storage_container_acl my-azure name=myservice
 
@@ -2634,6 +2734,9 @@ def show_storage_container_acl(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The show_storage_container function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An storage container name must be specified as "name"')
@@ -2658,7 +2761,9 @@ def set_storage_container_acl(kwargs=None, storage_conn=None, call=None):
 
     Set a storage container's acl
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f set_storage_container my-azure name=mycontainer
 
@@ -2698,7 +2803,9 @@ def delete_storage_container(kwargs=None, storage_conn=None, call=None):
 
     Delete a container associated with the storage account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f delete_storage_container my-azure name=mycontainer
 
@@ -2714,6 +2821,9 @@ def delete_storage_container(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The delete_storage_container function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An storage container name must be specified as "name"')
@@ -2735,7 +2845,9 @@ def lease_storage_container(kwargs=None, storage_conn=None, call=None):
 
     Lease a container associated with the storage account
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f lease_storage_container my-azure name=mycontainer
 
@@ -2769,6 +2881,9 @@ def lease_storage_container(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The lease_storage_container function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'name' not in kwargs:
         raise SaltCloudSystemExit('An storage container name must be specified as "name"')
@@ -2809,7 +2924,9 @@ def list_blobs(kwargs=None, storage_conn=None, call=None):
 
     List blobs associated with the container
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f list_blobs my-azure container=mycontainer
 
@@ -2835,20 +2952,21 @@ def list_blobs(kwargs=None, storage_conn=None, call=None):
         Optional. Specifies one or more datasets to include in the
         response. To specify more than one of these options on the URI,
         you must separate each option with a comma. Valid values are:
-            snapshots:
-                Specifies that snapshots should be included in the
-                enumeration. Snapshots are listed from oldest to newest in
-                the response.
-            metadata:
-                Specifies that blob metadata be returned in the response.
-            uncommittedblobs:
-                Specifies that blobs for which blocks have been uploaded,
-                but which have not been committed using Put Block List
-                (REST API), be included in the response.
-            copy:
-                Version 2012-02-12 and newer. Specifies that metadata
-                related to any current or previous Copy Blob operation
-                should be included in the response.
+
+        snapshots:
+            Specifies that snapshots should be included in the
+            enumeration. Snapshots are listed from oldest to newest in
+            the response.
+        metadata:
+            Specifies that blob metadata be returned in the response.
+        uncommittedblobs:
+            Specifies that blobs for which blocks have been uploaded,
+            but which have not been committed using Put Block List
+            (REST API), be included in the response.
+        copy:
+            Version 2012-02-12 and newer. Specifies that metadata
+            related to any current or previous Copy Blob operation
+            should be included in the response.
     delimiter:
         Optional. When the request includes this parameter, the operation
         returns a BlobPrefix element in the response body that acts as a
@@ -2860,6 +2978,9 @@ def list_blobs(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The list_blobs function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'container' not in kwargs:
         raise SaltCloudSystemExit('An storage container name must be specified as "container"')
@@ -2876,7 +2997,9 @@ def show_blob_service_properties(kwargs=None, storage_conn=None, call=None):
 
     Show a blob's service properties
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_blob_service_properties my-azure
     '''
@@ -2907,7 +3030,9 @@ def set_blob_service_properties(kwargs=None, storage_conn=None, call=None):
     set the default request version for all incoming requests that do not
     have a version specified.
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f set_blob_service_properties my-azure
 
@@ -2920,6 +3045,9 @@ def set_blob_service_properties(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The set_blob_service_properties function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'properties' not in kwargs:
         raise SaltCloudSystemExit('The blob service properties name must be specified as "properties"')
@@ -2941,7 +3069,9 @@ def show_blob_properties(kwargs=None, storage_conn=None, call=None):
     Returns all user-defined metadata, standard HTTP properties, and
     system properties for the blob.
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f show_blob_properties my-azure container=mycontainer blob=myblob
 
@@ -2956,6 +3086,9 @@ def show_blob_properties(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The show_blob_properties function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'container' not in kwargs:
         raise SaltCloudSystemExit('The container name must be specified as "container"')
@@ -2988,7 +3121,9 @@ def set_blob_properties(kwargs=None, storage_conn=None, call=None):
 
     Set a blob's properties
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f set_blob_properties my-azure
 
@@ -3022,6 +3157,9 @@ def set_blob_properties(kwargs=None, storage_conn=None, call=None):
             'The set_blob_properties function must be called with -f or --function.'
         )
 
+    if kwargs is None:
+        kwargs = {}
+
     if 'container' not in kwargs:
         raise SaltCloudSystemExit('The blob container name must be specified as "container"')
 
@@ -3052,7 +3190,9 @@ def put_blob(kwargs=None, storage_conn=None, call=None):
 
     Upload a blob
 
-    CLI Examples::
+    CLI Examples:
+
+    .. code-block:: bash
 
         salt-cloud -f put_blob my-azure container=base name=top.sls blob_path=/srv/salt/top.sls
         salt-cloud -f put_blob my-azure container=base name=content.txt blob_content='Some content'
@@ -3098,6 +3238,9 @@ def put_blob(kwargs=None, storage_conn=None, call=None):
             'The put_blob function must be called with -f or --function.'
         )
 
+    if kwargs is None:
+        kwargs = {}
+
     if 'container' not in kwargs:
         raise SaltCloudSystemExit('The blob container name must be specified as "container"')
 
@@ -3122,7 +3265,9 @@ def get_blob(kwargs=None, storage_conn=None, call=None):
 
     Download a blob
 
-    CLI Example::
+    CLI Example:
+
+    .. code-block:: bash
 
         salt-cloud -f get_blob my-azure container=base name=top.sls local_path=/srv/salt/top.sls
         salt-cloud -f get_blob my-azure container=base name=content.txt return_content=True
@@ -3162,6 +3307,9 @@ def get_blob(kwargs=None, storage_conn=None, call=None):
         raise SaltCloudSystemExit(
             'The get_blob function must be called with -f or --function.'
         )
+
+    if kwargs is None:
+        kwargs = {}
 
     if 'container' not in kwargs:
         raise SaltCloudSystemExit('The blob container name must be specified as "container"')

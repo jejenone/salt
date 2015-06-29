@@ -63,9 +63,17 @@ def installed(name, recurse=False, force=False):
 
     # Install the features
     ret['changes'] = {'feature': __salt__['win_servermanager.install'](name, recurse)}
-    ret['result'] = ret['changes']['feature']['Success'] == 'True'
-    if not ret['result']:
-        ret['comment'] = 'failed to install the feature: {0}'.format(ret['changes']['feature']['ExitCode'])
+
+    if 'Success' in ret['changes']['feature']:
+        ret['result'] = ret['changes']['feature']['Success'] == 'True'
+        if not ret['result']:
+            ret['comment'] = 'Failed to install {0}: {1}'.format(name, ret['changes']['feature']['ExitCode'])
+        else:
+            ret['comment'] = 'Installed {0}'.format(name)
+    else:
+        ret['result'] = False
+        ret['comment'] = 'Failed to install {0}.\nError Message:\n{1}'.format(name, ret['changes']['feature']['message'])
+        ret['changes'] = {}
 
     return ret
 
@@ -83,6 +91,7 @@ def removed(name):
         the server is restarted.
 
     Example:
+
     Run ``salt MinionName win_servermanager.list_installed`` to get a list of all features installed. Use the top
     name listed for each feature, not the indented one. Do not use the role or feature names mentioned in the
     PKGMGR documentation.
@@ -92,7 +101,6 @@ def removed(name):
         ISWebserverRole:
           win_servermanager.removed:
             - name: Web-Server
-
     '''
     ret = {'name': name,
            'result': True,

@@ -37,7 +37,7 @@ To use the mongo returner, append '--return mongo' to the salt command.
 
 To use the alternative configuration, append '--return_config alternative' to the salt command.
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 
 .. code-block:: bash
 
@@ -56,6 +56,7 @@ import salt.ext.six as six
 # Import third party libs
 try:
     import pymongo
+    version = pymongo.version
     HAS_PYMONGO = True
 except ImportError:
     HAS_PYMONGO = False
@@ -116,7 +117,10 @@ def _get_conn(ret):
     user = _options.get('user')
     password = _options.get('password')
 
-    conn = pymongo.Connection(host, port)
+    if float(version) > 2.3:
+        conn = pymongo.MongoClient(host, port)
+    else:
+        conn = pymongo.Connection(host, port)
     mdb = conn[db_]
 
     if user and password:

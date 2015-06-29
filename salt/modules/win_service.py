@@ -252,7 +252,7 @@ def create_win_salt_restart_task():
     '''
     cmd = 'schtasks /RU "System" /Create /TN restart-salt-minion /TR "powershell Restart-Service salt-minion" /sc ONCE /sd 01/15/1975 /st 01:00 /F'
 
-    return __salt__['cmd.run'](cmd)
+    return __salt__['cmd.shell'](cmd)
 
 
 def execute_salt_restart_task():
@@ -266,7 +266,7 @@ def execute_salt_restart_task():
         salt '*' service.execute_salt_restart_task()
     '''
     cmd = 'schtasks /Run /TN restart-salt-minion'
-    return __salt__['cmd.run'](cmd)
+    return __salt__['cmd.shell'](cmd)
 
 
 def status(name, sig=None):
@@ -306,9 +306,9 @@ def getsid(name):
     for line in lines:
         if 'SERVICE SID:' in line:
             comps = line.split(':', 1)
-            if comps[1] > 1:
+            try:
                 return comps[1].strip()
-            else:
+            except (AttributeError, IndexError):
                 return None
 
 
@@ -391,7 +391,9 @@ def create(name,
            password=None,
            **kwargs):
     '''
-    Create the named service
+    Create the named service.
+
+    .. versionadded:: Beryllium
 
     Required parameters:
     name: Specifies the service name returned by the getkeyname operation

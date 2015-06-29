@@ -23,6 +23,7 @@ import yaml
 # Import salt libs
 import salt
 import salt.utils
+import salt.utils.url
 import salt.fileclient
 from salt.utils.odict import OrderedDict
 
@@ -89,7 +90,7 @@ class SaltCacheLoader(BaseLoader):
         '''
         Cache a file from the salt master
         '''
-        saltpath = path.join('salt://', template)
+        saltpath = salt.utils.url.create(template)
         self.file_client().get_file(saltpath, '', True, self.saltenv)
 
     def check_cache(self, template):
@@ -384,13 +385,7 @@ class SerializerExtension(Extension, object):
         yaml_txt = yaml.dump(value, default_flow_style=flow_style,
                              Dumper=OrderedDictDumper).strip()
         if yaml_txt.endswith('\n...\n'):
-            log.info('Yaml filter ended with "\n...\n". This trailing string '
-                     'will be removed in Boron.')
-            salt.utils.warn_until(
-                'Boron',
-                'Please remove the log message above.',
-                _dont_call_warnings=True
-            )
+            yaml_txt = yaml_txt[:len(yaml_txt-5)]
         return Markup(yaml_txt)
 
     def format_python(self, value):

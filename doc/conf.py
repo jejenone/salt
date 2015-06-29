@@ -24,6 +24,8 @@ class Mock(object):
     def __init__(self, *args, **kwargs):
         pass
 
+    __all__ = []
+
     def __call__(self, *args, **kwargs):
         ret = Mock()
         # If mocked function is used as a decorator, expose decorated function.
@@ -42,10 +44,12 @@ class Mock(object):
 MOCK_MODULES = [
     # salt core
     'Crypto',
+    'Crypto.Signature',
     'Crypto.Cipher',
     'Crypto.Hash',
     'Crypto.PublicKey',
     'Crypto.Random',
+    'Crypto.Signature',
     'M2Crypto',
     'msgpack',
     'yaml',
@@ -54,6 +58,7 @@ MOCK_MODULES = [
     'yaml.scanner',
     'zmq',
     'zmq.eventloop',
+    'zmq.eventloop.ioloop',
 
     # third-party libs for cloud modules
     'libcloud',
@@ -78,7 +83,9 @@ MOCK_MODULES = [
     'tornado',
     'tornado.concurrent',
     'tornado.gen',
+    'tornado.httpclient',
     'tornado.httpserver',
+    'tornado.httputil',
     'tornado.ioloop',
     'tornado.web',
     'tornado.websocket',
@@ -89,22 +96,27 @@ MOCK_MODULES = [
     'ws4py.websocket',
 
     # modules, renderers, states, returners, et al
+    'ClusterShell',
+    'ClusterShell.NodeSet',
     'django',
     'libvirt',
     'MySQLdb',
     'MySQLdb.cursors',
+    'nagios_json',
     'psutil',
+    'psutil.version_info',
     'pycassa',
     'pymongo',
     'rabbitmq_server',
     'redis',
     'requests',
+    'requests.exceptions',
     'rpm',
     'rpmUtils',
     'rpmUtils.arch',
     'yum',
     'OpenSSL',
-    'zfs'
+    'zfs',
 ]
 
 for mod_name in MOCK_MODULES:
@@ -150,8 +162,25 @@ project = 'Salt'
 copyright = '2015 SaltStack, Inc.'
 
 version = salt.version.__version__
-#release = '.'.join(map(str, salt.version.__version_info__))
-release = '2014.7.2'
+latest_release = '2015.5.2'  # latest release
+previous_release = '2014.7.6'  # latest release from previous branch
+previous_release_dir = '2014.7'  # path on web server for previous branch
+build_type = 'develop'  # latest, previous, develop
+
+# set release to 'version' for develop so sha is used
+# - otherwise -
+# set release to 'latest_release' or 'previous_release'
+
+release = version  # version, latest_release, previous_release
+
+# Set google custom search engine
+
+if release == latest_release:
+    search_cx = '004624818632696854117:yfmprrbw3pk'
+elif release.startswith('2014.7'):
+    search_cx = '004624818632696854117:thhslradbru'
+else:
+    search_cx = '004624818632696854117:haj7bjntf4s'  # develop
 
 needs_sphinx = '1.3'
 
@@ -213,7 +242,7 @@ gettext_compact = False
 
 
 ### HTML options
-html_theme = 'saltstack'
+html_theme = 'saltstack2' #change to 'saltstack' to use previous theme
 html_theme_path = ['_themes']
 html_title = u''
 html_short_title = 'Salt'
@@ -264,6 +293,11 @@ html_context = {
     'github_base': 'https://github.com/saltstack/salt',
     'github_issues': 'https://github.com/saltstack/salt/issues',
     'github_downloads': 'https://github.com/saltstack/salt/downloads',
+    'latest_release': latest_release,
+    'previous_release': previous_release,
+    'previous_release_dir': previous_release_dir,
+    'search_cx': search_cx,
+    'build_type': build_type,
 }
 
 html_use_index = True
@@ -275,26 +309,24 @@ html_show_copyright = True
 ### Latex options
 
 latex_documents = [
-  ('contents','Salt-All.tex','Salt All-In-One Documentation','SaltStack, Inc.','manual'),
-  ('contents-1','Salt-1.tex','Salt 1/4 Documentation','SaltStack, Inc.','manual'),
-  ('contents-2','Salt-2.tex','Salt 2/4 Documentation', 'SaltStack, Inc.','manual'),
-  ('contents-3','Salt-3.tex','Salt 3/4 Documentation','SaltStack, Inc.','manual'),
-  ('contents-4','Salt-4.tex','Salt 4/4 Documentation','SaltStack, Inc.','manual'),
+  ('contents', 'Salt.tex', 'Salt Documentation', 'SaltStack, Inc.', 'manual'),
 ]
 
-latex_logo = '_static/salt-logo.pdf'
+latex_logo = '_static/salt-logo.png'
 
 latex_elements = {
     'inputenc': '',     # use XeTeX instead of the inputenc LaTeX package.
     'utf8extra': '',
     'preamble': '''
-
-\usepackage{fontspec}
-\setsansfont{DejaVu Sans}
-\setromanfont{DejaVu Serif}
-\setmonofont{DejaVu Sans Mono}
+    \usepackage{fontspec}
+    \setsansfont{Linux Biolinum O}
+    \setromanfont{Linux Libertine O}
+    \setmonofont{Source Code Pro}
 ''',
 }
+### Linux Biolinum, Linux Libertine: http://www.linuxlibertine.org/
+### Source Code Pro: https://github.com/adobe-fonts/source-code-pro/releases
+
 
 ### Linkcheck options
 linkcheck_ignore = [r'http://127.0.0.1',

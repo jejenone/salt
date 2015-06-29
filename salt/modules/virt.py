@@ -173,15 +173,17 @@ def _libvirt_creds():
     g_cmd = 'grep ^\\s*group /etc/libvirt/qemu.conf'
     u_cmd = 'grep ^\\s*user /etc/libvirt/qemu.conf'
     try:
-        group = subprocess.Popen(g_cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0].split('"')[1]
+        stdout = subprocess.Popen(g_cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE).communicate()[0]
+        group = salt.utils.to_str(stdout).split('"')[1]
     except IndexError:
         group = 'root'
     try:
-        user = subprocess.Popen(u_cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0].split('"')[1]
+        stdout = subprocess.Popen(u_cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE).communicate()[0]
+        user = salt.utils.to_str(stdout).split('"')[1]
     except IndexError:
         user = 'root'
     return {'user': user, 'group': group}
@@ -582,8 +584,9 @@ def init(name,
                 mode = (0o0777 ^ mask) & 0o0666
                 os.chmod(img_dest, mode)
 
-            except (IOError, OSError):
-                return False
+            except (IOError, OSError) as e:
+                raise CommandExecutionError('problem copying image. {0} - {1}'.format(image, e))
+
             seedable = True
         else:
             log.error('unsupported hypervisor when handling disk image')
@@ -808,8 +811,8 @@ def get_nics(vm_):
                 if v_node.tagName == 'virtualport':
                     temp = {}
                     temp['type'] = v_node.getAttribute('type')
-                    for key in v_node.attributes:
-                        temp[key] = v_node.getAttribute(key)
+                    for key, value in v_node.attributes.items():
+                        temp[key] = value
                     nic['virtualport'] = temp
             if 'mac' not in nic:
                 continue
@@ -907,10 +910,11 @@ def get_disks(vm_):
                 break
 
             output = []
-            qemu_output = subprocess.Popen(['qemu-img', 'info',
-                disks[dev]['file']],
-                shell=False,
-                stdout=subprocess.PIPE).communicate()[0]
+            stdout = subprocess.Popen(
+                        ['qemu-img', 'info', disks[dev]['file']],
+                        shell=False,
+                        stdout=subprocess.PIPE).communicate()[0]
+            qemu_output = salt.utils.to_str(stdout)
             snapshots = False
             columns = None
             lines = qemu_output.strip().split('\n')
@@ -1358,9 +1362,10 @@ def migrate_non_shared(vm_, target, ssh=False):
     cmd = _get_migrate_command() + ' --copy-storage-all ' + vm_\
         + _get_target(target, ssh)
 
-    return subprocess.Popen(cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0]
+    stdout = subprocess.Popen(cmd,
+                shell=True,
+                stdout=subprocess.PIPE).communicate()[0]
+    return salt.utils.to_str(stdout)
 
 
 def migrate_non_shared_inc(vm_, target, ssh=False):
@@ -1376,9 +1381,10 @@ def migrate_non_shared_inc(vm_, target, ssh=False):
     cmd = _get_migrate_command() + ' --copy-storage-inc ' + vm_\
         + _get_target(target, ssh)
 
-    return subprocess.Popen(cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0]
+    stdout = subprocess.Popen(cmd,
+                shell=True,
+                stdout=subprocess.PIPE).communicate()[0]
+    return salt.utils.to_str(stdout)
 
 
 def migrate(vm_, target, ssh=False):
@@ -1394,9 +1400,10 @@ def migrate(vm_, target, ssh=False):
     cmd = _get_migrate_command() + ' ' + vm_\
         + _get_target(target, ssh)
 
-    return subprocess.Popen(cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0]
+    stdout = subprocess.Popen(cmd,
+                shell=True,
+                stdout=subprocess.PIPE).communicate()[0]
+    return salt.utils.to_str(stdout)
 
 
 def seed_non_shared_migrate(disks, force=False):

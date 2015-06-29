@@ -3,7 +3,7 @@
 Module for making various web calls. Primarily designed for webhooks and the
 like, but also useful for basic http testing.
 
-.. versionadded:: 2015.2
+.. versionadded:: 2015.5.0
 '''
 from __future__ import absolute_import
 
@@ -15,7 +15,7 @@ def query(url, **kwargs):
     '''
     Query a resource, and decode the return data
 
-    .. versionadded:: 2015.2
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 
@@ -34,7 +34,7 @@ def update_ca_bundle(target=None, source=None, merge_files=None):
     '''
     Update the local CA bundle file from a URL
 
-    .. versionadded:: 2015.2
+    .. versionadded:: 2015.5.0
 
     CLI Example:
 

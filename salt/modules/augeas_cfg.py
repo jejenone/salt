@@ -130,7 +130,8 @@ def execute(context=None, lens=None, commands=()):
 
         try:
             if method == 'set':
-                path, value, remainder = re.split('([^\'" ]+|"[^"]+"|\'[^\']+\')$', arg, 1)
+                path, value, remainder = re.split('([^\'" ]+|"[^"]*"|\'[^\']*\')$', arg, 1)
+                path = path.rstrip()
                 if context:
                     path = os.path.join(context.rstrip('/'), path.lstrip('/'))
                 value = value.strip('"').strip("'")
@@ -141,7 +142,7 @@ def execute(context=None, lens=None, commands=()):
                     path = os.path.join(context.rstrip('/'), path.lstrip('/'))
                 args = {'src': path, 'dst': dst}
             elif method == 'insert':
-                path, where, label = re.split(' (before|after) ', arg)
+                label, where, path = re.split(' (before|after) ', arg)
                 if context:
                     path = os.path.join(context.rstrip('/'), path.lstrip('/'))
                 args = {'path': path, 'label': label, 'before': where == 'before'}

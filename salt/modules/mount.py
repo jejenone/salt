@@ -696,7 +696,7 @@ def mount(name, device, mkmnt=False, fstype='', opts='defaults', user=None):
         opts = opts.split(',')
 
     if not os.path.exists(name) and mkmnt:
-        __salt__['file.mkdir'](name=name, user=user)
+        __salt__['file.mkdir'](name, user=user)
 
     args = ''
     if opts is not None:
@@ -765,7 +765,7 @@ def umount(name, device=None, user=None):
 
         salt '*' mount.umount /mnt/foo
 
-        .. versionadded:: 2015.2.0
+        .. versionadded:: 2015.5.0
 
         salt '*' mount.umount /mnt/foo /dev/xvdc1
     '''

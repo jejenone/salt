@@ -13,8 +13,11 @@ import re
 import time
 
 # Import salt libs
+from salt.ext.six.moves.urllib.parse import urlparse as _urlparse  # pylint: disable=import-error,no-name-in-module
+from salt.ext.six.moves.urllib.parse import parse_qs as _parse_qs  # pylint: disable=import-error,no-name-in-module
 import salt.loader
 import salt.utils
+import salt.utils.locales
 
 # Import 3rd-party libs
 import salt.ext.six as six
@@ -196,7 +199,7 @@ def diff_mtime_map(map1, map2):
     Is there a change to the mtime map? return a boolean
     '''
     # check if the mtimes are the same
-    if cmp(sorted(map1), sorted(map2)) != 0:
+    if sorted(map1) != sorted(map2):
         #log.debug('diff_mtime_map: the maps are different')
         return True
 
@@ -219,7 +222,9 @@ def reap_fileserver_cache_dir(cache_base, find_func):
             # This will only remove the directory on the second time
             # "_reap_cache" is called (which is intentional)
             if len(dirs) == 0 and len(files) == 0:
-                os.rmdir(root)
+                # only remove if empty directory is older than 60s
+                if time.time() - os.path.getctime(root) > 60:
+                    os.rmdir(root)
                 continue
             # if not, lets check the files in the directory
             for file_ in files:
@@ -309,6 +314,12 @@ class Fileserver(object):
         Simplify master opts
         '''
         return self.opts
+
+    def update_opts(self):
+        # This fix func monkey patching by pillar
+        for name, func in self.servers.items():
+            if '__opts__' in func.__globals__:
+                func.__globals__['__opts__'].update(self.opts)
 
     def clear_cache(self, back=None):
         '''
@@ -440,20 +451,14 @@ class Fileserver(object):
             return fnd
         if '../' in path:
             return fnd
-        if path.startswith('|'):
-            # The path arguments are escaped
-            path = path[1:]
+        if salt.utils.url.is_escaped(path):
+            # don't attempt to find URL query arguements in the path
+            path = salt.utils.url.unescape(path)
         else:
-            if '?' in path:
-                hcomps = path.split('?')
-                path = hcomps[0]
-                comps = hcomps[1].split('&')
-                for comp in comps:
-                    if '=' not in comp:
-                        # Invalid option, skip it
-                        continue
-                    args = comp.split('=', 1)
-                    kwargs[args[0]] = args[1]
+            split_path = _urlparse(path)
+            path = split_path.path
+            query = _parse_qs(split_path.query)
+            kwargs.update(query)
         if 'env' in kwargs:
             salt.utils.warn_until(
                 'Boron',
@@ -542,7 +547,7 @@ class Fileserver(object):
             if fstr in self.servers:
                 ret.update(self.servers[fstr](load))
         # upgrade all set elements to a common encoding
-        ret = [salt.utils.sdecode(f) for f in ret]
+        ret = [salt.utils.locales.sdecode(f) for f in ret]
         # some *fs do not handle prefix. Ensure it is filtered
         prefix = load.get('prefix', '').strip('/')
         if prefix != '':
@@ -570,7 +575,7 @@ class Fileserver(object):
             if fstr in self.servers:
                 ret.update(self.servers[fstr](load))
         # upgrade all set elements to a common encoding
-        ret = [salt.utils.sdecode(f) for f in ret]
+        ret = [salt.utils.locales.sdecode(f) for f in ret]
         # some *fs do not handle prefix. Ensure it is filtered
         prefix = load.get('prefix', '').strip('/')
         if prefix != '':
@@ -598,7 +603,7 @@ class Fileserver(object):
             if fstr in self.servers:
                 ret.update(self.servers[fstr](load))
         # upgrade all set elements to a common encoding
-        ret = [salt.utils.sdecode(f) for f in ret]
+        ret = [salt.utils.locales.sdecode(f) for f in ret]
         # some *fs do not handle prefix. Ensure it is filtered
         prefix = load.get('prefix', '').strip('/')
         if prefix != '':
@@ -627,7 +632,7 @@ class Fileserver(object):
                 ret = self.servers[symlstr](load)
         # upgrade all set elements to a common encoding
         ret = dict([
-            (salt.utils.sdecode(x), salt.utils.sdecode(y)) for x, y in ret.items()
+            (salt.utils.locales.sdecode(x), salt.utils.locales.sdecode(y)) for x, y in ret.items()
         ])
         # some *fs do not handle prefix. Ensure it is filtered
         prefix = load.get('prefix', '').strip('/')

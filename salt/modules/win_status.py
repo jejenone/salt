@@ -9,13 +9,16 @@ or for problem solving if your minion is having problems.
 :depends:   - pythoncom
             - wmi
 '''
-from __future__ import absolute_import
 
-import subprocess
+# Import Python Libs
+from __future__ import absolute_import
 import logging
+
+# Import Salt Libs
 import salt.utils
 import salt.ext.six as six
 import salt.utils.event
+from salt._compat import subprocess
 from salt.utils.network import host_to_ip as _host_to_ip
 
 import os
@@ -164,7 +167,7 @@ def saltmem(human_readable=False):
 
     CLI Example:
 
-    .. code-black:: bash
+    .. code-block:: bash
 
         salt '*' status.salt_mem
         salt '*' status.salt_mem human_readable=True
@@ -253,8 +256,8 @@ def _get_process_info(proc):
     '''
     Return  process information
     '''
-    cmd = (proc.CommandLine or '').encode('utf-8')
-    name = proc.Name.encode('utf-8')
+    cmd = salt.utils.to_str(proc.CommandLine or '')
+    name = salt.utils.to_str(proc.Name)
     info = dict(
         cmd=cmd,
         name=name,
@@ -268,13 +271,13 @@ def _get_process_owner(process):
     domain, error_code, user = None, None, None
     try:
         domain, error_code, user = process.GetOwner()
-        owner['user'] = user.encode('utf-8')
-        owner['user_domain'] = domain.encode('utf-8')
+        owner['user'] = salt.utils.to_str(user)
+        owner['user_domain'] = salt.utils.to_str(domain)
     except Exception as exc:
         pass
     if not error_code and all((user, domain)):
-        owner['user'] = user.encode('utf-8')
-        owner['user_domain'] = domain.encode('utf-8')
+        owner['user'] = salt.utils.to_str(user)
+        owner['user_domain'] = salt.utils.to_str(domain)
     elif process.ProcessId in [0, 4] and error_code == 2:
         # Access Denied for System Idle Process and System
         owner['user'] = 'SYSTEM'
@@ -301,7 +304,7 @@ def _byte_calc(val):
 
 def master(master=None, connected=True):
     '''
-    .. versionadded:: 2015.2.0
+    .. versionadded:: 2015.5.0
 
     Fire an event if the minion gets disconnected from its master. This
     function is meant to be run via a scheduled job from the minion. If
@@ -336,12 +339,12 @@ def master(master=None, connected=True):
         '''
         remotes = set()
         try:
-            data = subprocess.check_output(['netstat', '-n', '-p', 'TCP'])
+            data = subprocess.check_output(['netstat', '-n', '-p', 'TCP'])  # pylint: disable=minimum-python-version
         except subprocess.CalledProcessError:
             log.error('Failed netstat')
             raise
 
-        lines = data.split('\n')
+        lines = salt.utils.to_str(data).split('\n')
         for line in lines:
             if 'ESTABLISHED' not in line:
                 continue

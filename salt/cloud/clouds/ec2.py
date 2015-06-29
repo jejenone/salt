@@ -61,7 +61,7 @@ To use the EC2 cloud module, set up the cloud configuration at
       # Password defaults to None
       ssh_gateway_password: ExamplePasswordHere
 
-      provider: ec2
+      driver: ec2
 
 :depends: requests
 '''
@@ -83,14 +83,17 @@ import hashlib
 import binascii
 import datetime
 import base64
+import msgpack
+import json
+import re
+import decimal
 
 # Import 3rd-party libs
 # pylint: disable=import-error,no-name-in-module,redefined-builtin
-import requests
 import salt.ext.six as six
 from salt.ext.six.moves import map, range, zip
 from salt.ext.six.moves.urllib.parse import urlparse as _urlparse, urlencode as _urlencode
-# pylint: enable=no-name-in-module
+
 # Try to import PyCrypto, which may not be installed on a RAET-based system
 try:
     import Crypto
@@ -100,13 +103,19 @@ try:
     HAS_PYCRYPTO = True
 except ImportError:
     HAS_PYCRYPTO = False
-# pylint: enable=import-error
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+# pylint: enable=import-error,no-name-in-module,redefined-builtin
 
 # Import salt libs
 import salt.utils
-from salt.utils import namespaced_function
-from salt.cloud.libcloudfuncs import get_salt_interface
+from salt import syspaths
 from salt._compat import ElementTree as ET
+import salt.utils.http as http
 import salt.utils.aws as aws
 
 # Import salt.cloud libs
@@ -122,9 +131,6 @@ from salt.exceptions import (
 
 # Get logging started
 log = logging.getLogger(__name__)
-
-# namespace libcloudfuncs
-get_salt_interface = namespaced_function(get_salt_interface, globals())
 
 SIZE_MAP = {
     'Micro Instance': 't1.micro',
@@ -166,12 +172,17 @@ EC2_RETRY_CODES = [
     'InsufficientReservedInstanceCapacity',
 ]
 
+JS_COMMENT_RE = re.compile(r'/\*.*?\*/', re.S)
+
 
 # Only load in this module if the EC2 configurations are in place
 def __virtual__():
     '''
     Set up the libcloud functions and check for EC2 configurations
     '''
+    if not HAS_REQUESTS:
+        return False
+
     if get_configured_provider() is False:
         return False
 
@@ -294,6 +305,10 @@ def optimize_providers(providers):
     return optimized_providers
 
 
+def sign(key, msg):
+    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+
 def query(params=None, setname=None, requesturl=None, location=None,
           return_url=False, return_root=False):
 
@@ -334,41 +349,66 @@ def query(params=None, setname=None, requesturl=None, location=None,
                 return {'error': endpoint_err}
 
         log.debug('Using EC2 endpoint: {0}'.format(endpoint))
+        # AWS v4 signature
+
         method = 'GET'
+        region = location
+        service = 'ec2'
+        canonical_uri = _urlparse(requesturl).path
+        host = endpoint.strip()
+
+        # Create a date for headers and the credential string
+        t = datetime.datetime.utcnow()
+        amz_date = t.strftime('%Y%m%dT%H%M%SZ')  # Format date as YYYYMMDD'T'HHMMSS'Z'
+        datestamp = t.strftime('%Y%m%d')  # Date w/o time, used in credential scope
+
+        canonical_headers = 'host:' + host + '\n' + 'x-amz-date:' + amz_date + '\n'
+        signed_headers = 'host;x-amz-date'
+
+        payload_hash = hashlib.sha256('').hexdigest()
 
         ec2_api_version = provider.get(
             'ec2_api_version',
             DEFAULT_EC2_API_VERSION
         )
 
-        params_with_headers['AWSAccessKeyId'] = access_key_id
-        params_with_headers['SignatureVersion'] = '2'
-        params_with_headers['SignatureMethod'] = 'HmacSHA256'
-        params_with_headers['Timestamp'] = '{0}'.format(timestamp)
         params_with_headers['Version'] = ec2_api_version
-        if token != '':
-            params_with_headers['SecurityToken'] = token
-        keys = sorted(params_with_headers)
-        values = list(map(params_with_headers.get, keys))
-        querystring = _urlencode(list(zip(keys, values)))
 
-        # AWS signature version 2 requires that spaces be encoded as
-        # %20, however urlencode uses '+'. So replace pluses with %20.
+        keys = sorted(params_with_headers.keys())
+        values = map(params_with_headers.get, keys)
+        querystring = _urlencode(list(zip(keys, values)))
         querystring = querystring.replace('+', '%20')
 
-        uri = '{0}\n{1}\n{2}\n{3}'.format(method.encode('utf-8'),
-                                          endpoint.encode('utf-8'),
-                                          endpoint_path.encode('utf-8'),
-                                          querystring.encode('utf-8'))
+        canonical_request = method + '\n' + canonical_uri + '\n' + \
+                    querystring + '\n' + canonical_headers + '\n' + \
+                    signed_headers + '\n' + payload_hash
 
-        hashed = hmac.new(secret_access_key, uri, hashlib.sha256)
-        sig = binascii.b2a_base64(hashed.digest())
-        params_with_headers['Signature'] = sig.strip()
+        algorithm = 'AWS4-HMAC-SHA256'
+        credential_scope = datestamp + '/' + region + '/' + service + '/' + 'aws4_request'
+
+        string_to_sign = algorithm + '\n' +  amz_date + '\n' + \
+                         credential_scope + '\n' + \
+                         hashlib.sha256(canonical_request).hexdigest()
+
+        kDate = sign(('AWS4' + provider['key']).encode('utf-8'), datestamp)
+        kRegion = sign(kDate, region)
+        kService = sign(kRegion, service)
+        signing_key = sign(kService, 'aws4_request')
+
+        signature = hmac.new(signing_key, (string_to_sign).encode('utf-8'),
+                             hashlib.sha256).hexdigest()
+        #sig = binascii.b2a_base64(hashed)
+
+        authorization_header = algorithm + ' ' + 'Credential=' + \
+                               provider['id'] + '/' + credential_scope + \
+                               ', ' +  'SignedHeaders=' + signed_headers + \
+                               ', ' + 'Signature=' + signature
+        headers = {'x-amz-date': amz_date, 'Authorization': authorization_header}
 
         log.debug('EC2 Request: {0}'.format(requesturl))
         log.trace('EC2 Request Parameters: {0}'.format(params_with_headers))
         try:
-            result = requests.get(requesturl, params=params_with_headers)
+            result = requests.get(requesturl, headers=headers, params=params_with_headers)
             log.debug(
                 'EC2 Response Status Code: {0}'.format(
                     # result.getcode()
@@ -1031,7 +1071,12 @@ def get_provider(vm_=None):
     if vm_ is None:
         provider = __active_provider_name__ or 'ec2'
     else:
-        provider = vm_.get('provider', 'ec2')
+        # Since using "provider: <provider-engine>" is deprecated, alias provider
+        # to use driver: "driver: <provider-engine>"
+        if 'provider' in vm_:
+            vm_['driver'] = vm_.pop('provider')
+
+        provider = vm_.get('driver', 'ec2')
 
     if ':' in provider:
         prov_comps = provider.split(':')
@@ -1107,10 +1152,17 @@ def _create_eni_if_necessary(interface):
 
     for subnet_query_result in subnet_query:
         if 'item' in subnet_query_result:
-            for subnet in subnet_query_result['item']:
-                if subnet['subnetId'] == interface['SubnetId']:
-                    found = True
-                    break
+            if type(subnet_query_result['item']) is dict:
+                for key, value in subnet_query_result['item'].iteritems():
+                    if key == "subnetId":
+                        if value == interface['SubnetId']:
+                            found = True
+                            break
+            else:
+                for subnet in subnet_query_result['item']:
+                    if subnet['subnetId'] == interface['SubnetId']:
+                        found = True
+                        break
 
     if not found:
         raise SaltCloudConfigError(
@@ -1987,6 +2039,7 @@ def wait_for_instance(
                 console = get_console_output(
                     instance_id=vm_['instance_id'],
                     call='action',
+                    location=get_location(vm_)
                 )
                 pprint.pprint(console)
                 time.sleep(5)
@@ -2059,6 +2112,17 @@ def create(vm_=None, call=None):
             'You cannot create an instance with -a or -f.'
         )
 
+    # Check for required profile parameters before sending any API calls.
+    if config.is_profile_configured(__opts__,
+                                    __active_provider_name__ or 'ec2',
+                                    vm_['profile']) is False:
+        return False
+
+    # Since using "provider: <provider-engine>" is deprecated, alias provider
+    # to use driver: "driver: <provider-engine>"
+    if 'provider' in vm_:
+        vm_['driver'] = vm_.pop('provider')
+
     salt.utils.cloud.fire_event(
         'event',
         'starting create',
@@ -2066,12 +2130,12 @@ def create(vm_=None, call=None):
         {
             'name': vm_['name'],
             'profile': vm_['profile'],
-            'provider': vm_['provider'],
+            'provider': vm_['driver'],
         },
         transport=__opts__['transport']
     )
     salt.utils.cloud.cachedir_index_add(
-        vm_['name'], vm_['profile'], 'ec2', vm_['provider']
+        vm_['name'], vm_['profile'], 'ec2', vm_['driver']
     )
 
     key_filename = config.get_cloud_config_value(
@@ -2204,7 +2268,7 @@ def create(vm_=None, call=None):
         log.info('Salt node data. Public_ip: {0}'.format(ip_address))
     vm_['ssh_host'] = ip_address
 
-    if get_salt_interface(vm_) == 'private_ips':
+    if salt.utils.cloud.get_salt_interface(vm_, __opts__) == 'private_ips':
         salt_ip_address = instance['privateIpAddress']
         log.info('Salt interface set to: {0}'.format(salt_ip_address))
     else:
@@ -2265,7 +2329,7 @@ def create(vm_=None, call=None):
     event_data = {
         'name': vm_['name'],
         'profile': vm_['profile'],
-        'provider': vm_['provider'],
+        'provider': vm_['driver'],
         'instance_id': vm_['instance_id'],
     }
     if volumes:
@@ -2446,6 +2510,9 @@ def set_tags(name=None,
     if kwargs is None:
         kwargs = {}
 
+    if location is None:
+        location = get_location()
+
     if instance_id is None:
         if 'resource_id' in kwargs:
             resource_id = kwargs['resource_id']
@@ -2457,7 +2524,7 @@ def set_tags(name=None,
 
         if resource_id is None:
             if instance_id is None:
-                instance_id = _get_node(name, location)[name]['instanceId']
+                instance_id = _get_node(name=name, instance_id=None, location=location)[name]['instanceId']
         else:
             instance_id = resource_id
 
@@ -2484,7 +2551,7 @@ def set_tags(name=None,
     while attempts >= 0:
         result = aws.query(params,
                            setname='tagSet',
-                           location=get_location(),
+                           location=location,
                            provider=get_provider(),
                            opts=__opts__,
                            sigver='4')
@@ -2898,7 +2965,12 @@ def list_nodes_full(location=None, call=None):
 
 
 def _vm_provider_driver(vm_):
-    alias, driver = vm_['provider'].split(':')
+    # Since using "provider: <provider-engine>" is deprecated, alias provider
+    # to use driver: "driver: <provider-engine>"
+    if 'provider' in vm_:
+        vm_['driver'] = vm_.pop('provider')
+
+    alias, driver = vm_['driver'].split(':')
     if alias not in __opts__['providers']:
         return None
 
@@ -3840,6 +3912,7 @@ def describe_snapshots(kwargs=None, call=None):
 
 def get_console_output(
         name=None,
+        location=None,
         instance_id=None,
         call=None,
         kwargs=None,
@@ -3855,6 +3928,9 @@ def get_console_output(
             'The get_console_output action must be called with '
             '-a or --action.'
         )
+
+    if location is None:
+        location = get_location()
 
     if not instance_id:
         instance_id = _get_node(name)[name]['instanceId']
@@ -3872,7 +3948,7 @@ def get_console_output(
 
     ret = {}
     data = aws.query(params,
-                     location=get_location(),
+                     location=location,
                      provider=get_provider(),
                      opts=__opts__,
                      sigver='4')
@@ -3963,3 +4039,185 @@ def get_password_data(
             ret['password'] = key_obj.decrypt(pwdata, sentinel)
 
     return ret
+
+
+def update_pricing(kwargs=None, call=None):
+    '''
+    Download most recent pricing information from AWS and convert to a local
+    JSON file.
+
+    CLI Examples:
+
+    .. code-block:: bash
+
+        salt-cloud -f update_pricing my-ec2-config
+        salt-cloud -f update_pricing my-ec2-config type=linux
+
+    .. versionadded:: Beryllium
+    '''
+    sources = {
+        'linux': 'https://a0.awsstatic.com/pricing/1/ec2/linux-od.min.js',
+        'rhel': 'https://a0.awsstatic.com/pricing/1/ec2/rhel-od.min.js',
+        'sles': 'https://a0.awsstatic.com/pricing/1/ec2/sles-od.min.js',
+        'mswin': 'https://a0.awsstatic.com/pricing/1/ec2/mswin-od.min.js',
+        'mswinsql': 'https://a0.awsstatic.com/pricing/1/ec2/mswinSQL-od.min.js',
+        'mswinsqlweb': 'https://a0.awsstatic.com/pricing/1/ec2/mswinSQLWeb-od.min.js',
+    }
+
+    if kwargs is None:
+        kwargs = {}
+
+    if 'type' not in kwargs:
+        for source in sources:
+            _parse_pricing(sources[source], source)
+    else:
+        _parse_pricing(sources[kwargs['type']], kwargs['type'])
+
+
+def _parse_pricing(url, name):
+    '''
+    Download and parse an individual pricing file from AWS
+
+    .. versionadded:: Beryllium
+    '''
+    price_js = http.query(url, text=True)
+
+    items = []
+    current_item = ''
+
+    price_js = re.sub(JS_COMMENT_RE, '', price_js['text'])
+    price_js = price_js.strip().rstrip(');').lstrip('callback(')
+    for keyword in (
+        'vers',
+        'config',
+        'rate',
+        'valueColumns',
+        'currencies',
+        'instanceTypes',
+        'type',
+        'ECU',
+        'storageGB',
+        'name',
+        'vCPU',
+        'memoryGiB',
+        'storageGiB',
+        'USD',
+    ):
+        price_js = price_js.replace(keyword, '"{0}"'.format(keyword))
+
+    for keyword in ('region', 'price', 'size'):
+        price_js = price_js.replace(keyword, '"{0}"'.format(keyword))
+        price_js = price_js.replace('"{0}"s'.format(keyword), '"{0}s"'.format(keyword))
+
+    price_js = price_js.replace('""', '"')
+
+    # Turn the data into something that's easier/faster to process
+    regions = {}
+    price_json = json.loads(price_js)
+    for region in price_json['config']['regions']:
+        sizes = {}
+        for itype in region['instanceTypes']:
+            for size in itype['sizes']:
+                sizes[size['size']] = size
+        regions[region['region']] = sizes
+
+    outfile = os.path.join(
+        syspaths.CACHE_DIR, 'cloud', 'ec2-pricing-{0}.p'.format(name)
+    )
+    with salt.utils.fopen(outfile, 'w') as fho:
+        msgpack.dump(regions, fho)
+
+    return True
+
+
+def show_pricing(kwargs=None, call=None):
+    '''
+    Show pricing for a particular profile. This is only an estimate, based on
+    unofficial pricing sources.
+
+    CLI Examples:
+
+    .. code-block:: bash
+
+        salt-cloud -f show_pricing my-ec2-config profile=my-profile
+
+    If pricing sources have not been cached, they will be downloaded. Once they
+    have been cached, they will not be updated automatically. To manually update
+    all prices, use the following command:
+
+    .. code-block:: bash
+
+        salt-cloud -f update_pricing <provider>
+
+    .. versionadded:: Beryllium
+    '''
+    profile = __opts__['profiles'].get(kwargs['profile'], {})
+    if not profile:
+        return {'Error': 'The requested profile was not found'}
+
+    # Make sure the profile belongs to ec2
+    provider = profile.get('provider', '0:0')
+    comps = provider.split(':')
+    if len(comps) < 2 or comps[1] != 'ec2':
+        return {'Error': 'The requested profile does not belong to EC2'}
+
+    image_id = profile.get('image', None)
+    image_dict = show_image({'image': image_id}, 'function')
+    image_info = image_dict[0]
+
+    # Find out what platform it is
+    if image_info.get('imageOwnerAlias', '') == 'amazon':
+        if image_info.get('platform', '') == 'windows':
+            image_description = image_info.get('description', '')
+            if 'sql' in image_description.lower():
+                if 'web' in image_description.lower():
+                    name = 'mswinsqlweb'
+                else:
+                    name = 'mswinsql'
+            else:
+                name = 'mswin'
+        elif image_info.get('imageLocation', '').strip().startswith('amazon/suse'):
+            name = 'sles'
+        else:
+            name = 'linux'
+    elif image_info.get('imageOwnerId', '') == '309956199498':
+        name = 'rhel'
+    else:
+        name = 'linux'
+
+    pricefile = os.path.join(
+        syspaths.CACHE_DIR, 'cloud', 'ec2-pricing-{0}.p'.format(name)
+    )
+
+    if not os.path.isfile(pricefile):
+        update_pricing({'type': name}, 'function')
+
+    with salt.utils.fopen(pricefile, 'r') as fhi:
+        ec2_price = msgpack.load(fhi)
+
+    region = get_location(profile)
+    size = profile.get('size', None)
+    if size is None:
+        return {'Error': 'The requested profile does not contain a size'}
+
+    try:
+        raw = ec2_price[region][size]
+    except KeyError:
+        return {'Error': 'The size ({0}) in the requested profile does not have '
+                'a price associated with it for the {1} region'.format(size, region)}
+
+    ret = {}
+    if kwargs.get('raw', False):
+        ret['_raw'] = raw
+
+    ret['per_hour'] = 0
+    for col in raw.get('valueColumns', []):
+        ret['per_hour'] += decimal.Decimal(col['prices'].get('USD', 0))
+
+    ret['per_hour'] = decimal.Decimal(ret['per_hour'])
+    ret['per_day'] = ret['per_hour'] * 24
+    ret['per_week'] = ret['per_day'] * 7
+    ret['per_month'] = ret['per_day'] * 30
+    ret['per_year'] = ret['per_week'] * 52
+
+    return {profile['profile']: ret}

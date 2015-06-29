@@ -214,11 +214,11 @@ def _raise_error_routes(iface, option, expected):
 
 def _read_file(path):
     '''
-    Reads and returns the contents of a file
+    Reads and returns the contents of a text file
     '''
     try:
         with salt.utils.flopen(path, 'rb') as contents:
-            return contents.readlines()
+            return [salt.utils.to_str(line) for line in contents.readlines()]
     except (OSError, IOError):
         return ''
 
@@ -596,13 +596,13 @@ def _parse_interfaces(interface_files=None):
                         iface_dict['ethtool'][attr] = valuestr
 
                     elif attr.startswith('bond'):
-                        opt = attr.split('_', 1)[1]
+                        opt = re.split(r'[_-]', attr, maxsplit=1)[1]
                         if 'bonding' not in iface_dict:
                             iface_dict['bonding'] = salt.utils.odict.OrderedDict()
                         iface_dict['bonding'][opt] = valuestr
 
                     elif attr.startswith('bridge'):
-                        opt = attr.split('_', 1)[1]
+                        opt = re.split(r'[_-]', attr, maxsplit=1)[1]
                         if 'bridging' not in iface_dict:
                             iface_dict['bridging'] = salt.utils.odict.OrderedDict()
                         iface_dict['bridging'][opt] = valuestr
@@ -1894,7 +1894,8 @@ def build_network_settings(**settings):
 
     # Write hostname to /etc/hostname
     sline = opts['hostname'].split('.', 1)
-    hostname = '{0}\n' . format(sline[0])
+    opts['hostname'] = sline[0]
+    hostname = '{0}\n' . format(opts['hostname'])
     current_domainname = current_network_settings['domainname']
 
     # Only write the hostname if it has changed

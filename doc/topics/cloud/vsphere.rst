@@ -2,6 +2,16 @@
 Getting Started With vSphere
 ============================
 
+.. note::
+
+    .. deprecated:: Carbon
+
+        The :py:func:`vsphere <salt.cloud.clouds.vsphere>` cloud driver has been
+        deprecated in favor of the :py:func:`vmware <salt.cloud.clouds.vmware>`
+        cloud driver and will be removed in Salt Carbon. Please refer to
+        :doc:`Getting started with VMware </topics/cloud/vmware>` instead to get
+        started with the configuration.
+
 VMware vSphere is a management platform for virtual infrastructure and cloud
 computing.
 
@@ -29,7 +39,7 @@ Set up the cloud config at ``/etc/salt/cloud.providers`` or in the
 .. code-block:: yaml
 
     my-vsphere-config:
-      provider: vsphere
+      driver: vsphere
       # Set the vSphere access credentials
       user: marco
       password: polo
@@ -94,7 +104,7 @@ added to the folder the original VM belongs to.
 
 host
 ----
-The MOR of the host where the vm should be registered. 
+The MOR of the host where the vm should be registered.
 
   If not specified:
     * if resourcepool is not specified, the current host is used.

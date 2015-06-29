@@ -224,6 +224,21 @@ each of Salt's module types such as "runners", "output", "wheel", "modules",
 
     extension_modules: srv/modules
 
+.. conf_minion:: module_dirs
+
+``module_dirs``
+---------------
+
+Default: ``[]``
+
+Like ``extension_modules``, but a list of extra directories to search
+for Salt modules.
+
+.. code-block:: yaml
+
+    module_dirs:
+      - /var/cache/salt/minion/extmods
+
 .. conf_master:: cachedir
 
 ``cachedir``
@@ -324,11 +339,11 @@ communication.
 ``enable_gpu_grains``
 ---------------------
 
-Default: ``False``
+Default: ``True``
 
-The master can take a while to start up when lspci and/or dmidecode is used
-to populate the grains for the master. Enable if you want to see GPU hardware
-data for your master.
+Enable GPU hardware data for your master. Be aware that the master can
+take a while to start up when lspci and/or dmidecode is used to populate the
+grains for the master.
 
 .. conf_master:: job_cache
 
@@ -380,6 +395,8 @@ local job cache on the master.
 
 ``event_return``
 -----------------
+
+.. versionadded:: 2015.5.0
 
 Default: ``''``
 
@@ -476,6 +493,10 @@ that connect to a master via localhost.
 
     presence_events: False
 
+
+Salt-SSH Configuration
+======================
+
 .. conf_master:: roster_file
 
 ``roster_file``
@@ -488,6 +509,23 @@ Pass in an alternative location for the salt-ssh roster file.
 .. code-block:: yaml
 
     roster_file: /root/roster
+
+.. conf_master:: ssh_minion_opts
+
+``ssh_minion_opts``
+-------------------
+
+Default: None
+
+Pass in minion option overrides that will be inserted into the SHIM for
+salt-ssh calls. The local minion config is not used for salt-ssh. Can be
+overridden on a per-minion basis in the roster (``minion_opts``)
+
+.. code-block:: yaml
+
+    minion_opts:
+      gpg_keydir: /root/gpg
+
 
 Master Security Settings
 ========================
@@ -1857,7 +1895,7 @@ There are additional details at :ref:`salt-pillars`
 ``ext_pillar_first``
 --------------------
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 
 The ext_pillar_first option allows for external pillar sources to populate
 before file system pillar. This allows for targeting file system pillar from
@@ -2289,6 +2327,9 @@ A group consists of a group name and a compound target.
     nodegroups:
       group1: 'L@foo.domain.com,bar.domain.com,baz.domain.com or bl*.domain.com'
       group2: 'G@os:Debian and foo.domain.com'
+      group3: 'G@os:Debian and N@group1'
+
+More information on using nodegroups can be found :ref:`here <targeting-nodegroups>`.
 
 
 Range Cluster Settings
@@ -2396,3 +2437,15 @@ List of git repositories to include with the local repo.
 
     win_gitrepos:
       - 'https://github.com/saltstack/salt-winrepo.git'
+
+To specify a specific revision of the repository, preface the
+repository location with a commit ID:
+
+.. code-block:: yaml
+
+    win_gitrepos:
+      - '<commit_id> https://github.com/saltstack/salt-winrepo.git'
+
+Replacing ``<commit_id>`` with the ID from GitHub. Specifying a commit
+ID is useful if you need to revert to a previous version if an error
+is introduced in the latest version.

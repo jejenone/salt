@@ -23,9 +23,12 @@ from salttesting.helpers import ensure_in_syspath
 ensure_in_syspath('../../')
 
 # Import Salt Libs
+import salt.ext.six as six
 import salt.utils
 from salt.modules import network
 from salt.exceptions import CommandExecutionError
+if six.PY2:
+    import salt.ext.ipaddress
 
 # Globals
 network.__grains__ = {}
@@ -37,6 +40,36 @@ class NetworkTestCase(TestCase):
     '''
     Test cases for salt.modules.network
     '''
+    def test_wol_bad_mac(self):
+        '''
+        tests network.wol with bad mac
+        '''
+        bad_mac = '31337'
+        self.assertRaises(ValueError, network.wol, bad_mac)
+
+    def test_wol_success(self):
+        '''
+        tests network.wol success
+        '''
+        mac = '080027136977'
+        bcast = '255.255.255.255 7'
+
+        class MockSocket(object):
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __call__(self, *args, **kwargs):
+                pass
+
+            def setsockopt(self, *args, **kwargs):
+                pass
+
+            def sendto(self, *args, **kwargs):
+                pass
+
+        with patch('socket.socket', MockSocket):
+            self.assertTrue(network.wol(mac, bcast))
+
     def test_ping(self):
         '''
         Test for Performs a ping to a host
@@ -238,21 +271,29 @@ class NetworkTestCase(TestCase):
                 self.assertDictEqual(network.connect('host', 'port'),
                                      {'comment': ret, 'result': True})
 
+    @skipIf(not six.PY2, 'test applies only to python 2')
     def test_is_private(self):
         '''
         Test for Check if the given IP address is a private address
         '''
-        with patch.object(salt.utils.network.IPv4Address, 'is_private',
+        with patch.object(salt.ext.ipaddress.IPv4Address, 'is_private',
                           return_value=True):
             self.assertTrue(network.is_private('0.0.0.0'))
+        with patch.object(salt.ext.ipaddress.IPv6Address, 'is_private',
+                          return_value=True):
+            self.assertTrue(network.is_private('::1'))
 
+    @skipIf(not six.PY2, 'test applies only to python 2')
     def test_is_loopback(self):
         '''
         Test for Check if the given IP address is a loopback address
         '''
-        with patch.object(salt.utils.network.IPv4Address, 'is_loopback',
-                          return_value=False):
-            self.assertFalse(network.is_private('0.0.0.0'))
+        with patch.object(salt.ext.ipaddress.IPv4Address, 'is_loopback',
+                          return_value=True):
+            self.assertTrue(network.is_loopback('127.0.0.1'))
+        with patch.object(salt.ext.ipaddress.IPv6Address, 'is_loopback',
+                          return_value=True):
+            self.assertTrue(network.is_loopback('::1'))
 
     def test_get_bufsize(self):
         '''

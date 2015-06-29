@@ -2,7 +2,7 @@
 '''
 Beacon to monitor disk usage.
 
-.. versionadded:: 2015.2.0
+.. versionadded:: 2015.5.0
 '''
 
 # Import Python libs
@@ -26,21 +26,30 @@ def __virtual__():
         return __virtualname__
 
 
+def validate(config):
+    '''
+    Validate the beacon configuration
+    '''
+    # Configuration for diskusage beacon should be a list of dicts
+    if not isinstance(config, dict):
+        log.info('Configuration for diskusage beacon must be a dictionary.')
+        return False
+    return True
+
+
 def beacon(config):
     '''
     Monitor the disk usage of the minion
 
-    Specify thresholds for for each load average
-    and only emit a beacon if any of them are
+    Specify thresholds for each disk and only emit a beacon if any of them are
     exceeded.
 
-    code_block:: yaml
+    .. code-block:: yaml
 
         beacons:
-            - diskusage:
-              - /: 63%
-              - /mnt/nfs: 50%
-
+          diskusage:
+            - /: 63%
+            - /mnt/nfs: 50%
     '''
     ret = []
     for diskusage in config:
